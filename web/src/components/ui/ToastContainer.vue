@@ -1,2 +1,23 @@
-<script setup lang="ts">import { useToast } from '../../composables/useToast'; const { toasts, remove } = useToast()</script>
-<template><div class="toast-container" aria-live="polite"><div v-for="toast in toasts" :key="toast.id" class="toast" :class="`toast-${toast.kind}`"><span>{{ toast.message }}</span><button type="button" aria-label="Fechar aviso" @click="remove(toast.id)">×</button></div></div></template>
+<script setup lang="ts">
+import { useToast } from "../../composables/useToast";
+const { toasts, remove } = useToast();
+</script>
+<template>
+  <div class="toast-container" aria-live="polite">
+    <div
+      v-for="toast in toasts"
+      :key="toast.id"
+      class="toast"
+      :class="`toast-${toast.kind}`"
+    >
+      <span>{{ toast.message }}</span
+      ><button
+        type="button"
+        aria-label="Fechar aviso"
+        @click="remove(toast.id)"
+      >
+        ×
+      </button>
+    </div>
+  </div>
+</template>
