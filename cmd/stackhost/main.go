@@ -241,7 +241,13 @@ func (a *app) createSession(w http.ResponseWriter, r *http.Request, id int64) {
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie("stackhost_session"); err == nil {
 		hash := sha256.Sum256([]byte(c.Value))
-		a.db.Exec("UPDATE sessions SET revoked_at=? WHERE token_hash=?", time.Now().UTC().Format(time.RFC3339), hex.EncodeToString(hash[:]))
+		tokenHash := hex.EncodeToString(hash[:])
+		var userID int64
+		_ = a.db.QueryRow("SELECT user_id FROM sessions WHERE token_hash=?", tokenHash).Scan(&userID)
+		a.db.Exec("UPDATE sessions SET revoked_at=? WHERE token_hash=?", time.Now().UTC().Format(time.RFC3339), tokenHash)
+		if userID > 0 {
+			a.audit(userID, "logout", "user", userID)
+		}
 	}
 	http.SetCookie(w, &http.Cookie{Name: "stackhost_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})

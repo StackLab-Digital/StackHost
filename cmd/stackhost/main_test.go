@@ -87,6 +87,10 @@ func TestLoginInvalidAndLogout(t *testing.T) {
 	if logout.Code != http.StatusOK {
 		t.Fatalf("logout status = %d", logout.Code)
 	}
+	var logoutEvents int
+	if err := a.db.QueryRow("SELECT count(*) FROM audit_logs WHERE action='logout'").Scan(&logoutEvents); err != nil || logoutEvents != 1 {
+		t.Fatalf("logout audit count = %d, err=%v", logoutEvents, err)
+	}
 	me := httptest.NewRecorder()
 	meReq := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
 	meReq.AddCookie(cookie)
