@@ -238,6 +238,14 @@ func (a *app) deployCompose(w http.ResponseWriter, r *http.Request, id int64) {
 	if a.db.QueryRow("SELECT runtime_mode FROM environment_settings WHERE id=1").Scan(&mode) != nil {
 		mode = "standalone"
 	}
+	if mode == "swarm" {
+		state, _ := exec.CommandContext(r.Context(), "docker", "info", "--format", "{{.Swarm.LocalNodeState}}|{{.Swarm.ControlAvailable}}").Output()
+		parts := strings.Split(strings.TrimSpace(string(state)), "|")
+		if len(parts) != 2 || parts[0] != "active" || parts[1] != "true" {
+			jsonError(w, 503, "swarm_unavailable", "O Swarm precisa estar ativo em um manager.")
+			return
+		}
+	}
 	tmp, err := os.CreateTemp("", "stackhost-compose-*.yml")
 	if err != nil {
 		jsonError(w, 500, "internal_error", "Não foi possível preparar o Compose.")
@@ -290,7 +298,20 @@ func (a *app) applicationRuntime(w http.ResponseWriter, r *http.Request, id int6
 	}
 	mode := "standalone"
 	_ = a.db.QueryRow("SELECT runtime_mode FROM environment_settings WHERE id=1").Scan(&mode)
-	json.NewEncoder(w).Encode(map[string]any{"mode": mode, "status": "not_deployed", "services": []any{}, "name": name, "project": stackName})
+	services := []map[string]any{}
+	status := "not_deployed"
+	if mode == "swarm" {
+		cmd := exec.CommandContext(r.Context(), "docker", "service", "ls", "--filter", "label=com.docker.stack.namespace="+stackName, "--format", "{{json .}}")
+		if output, err := cmd.Output(); err == nil && strings.TrimSpace(string(output)) != "" {
+			status = "running"
+		}
+	} else {
+		cmd := exec.CommandContext(r.Context(), "docker", "compose", "--project-name", stackName, "ps", "--format", "json")
+		if output, err := cmd.Output(); err == nil && strings.TrimSpace(string(output)) != "" {
+			status = "running"
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]any{"mode": mode, "status": status, "services": services, "name": name, "project": stackName})
 }
 
 func (a *app) applicationMetadata(w http.ResponseWriter, r *http.Request, id int64) {
