@@ -39,6 +39,16 @@ const sources = [
   },
   { value: "git", label: "Repositório Git", detail: "Conecte um repositório." },
 ];
+function applicationStatusLabel(status: string) {
+  return {
+    configured: "Configurada",
+    draft: "Rascunho",
+    invalid: "Requer atenção",
+    active: "Ativa",
+    inactive: "Inativa",
+    unknown: "Não publicado",
+  }[status] || status;
+}
 
 async function load() {
   loading.value = true;
@@ -231,9 +241,7 @@ onMounted(load);
               · Publicação ainda não configurada</span
             >
           </div>
-          <span class="status-text">{{
-            app.status === "unknown" ? "Não publicado" : app.status
-          }}</span
+          <span class="status-text">{{ applicationStatusLabel(app.status) }}</span
           ><button class="ghost icon-action" type="button" aria-label="Editar aplicação" title="Editar aplicação" @click.stop="openAppEdit(app)">
             <Pencil :size="16" aria-hidden="true" />
           </button>
