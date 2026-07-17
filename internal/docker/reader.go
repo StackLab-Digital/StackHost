@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	client "github.com/docker/docker/client"
@@ -42,6 +43,8 @@ func NewReader() (*Reader, error) {
 	return &Reader{client: c}, nil
 }
 func (r *Reader) Snapshot(ctx context.Context) Snapshot {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	out := Snapshot{}
 	if _, err := r.client.Ping(ctx); err != nil {
 		out.Message = fmt.Sprintf("Docker indisponível: %v", err)
