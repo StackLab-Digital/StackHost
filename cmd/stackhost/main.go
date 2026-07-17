@@ -153,7 +153,11 @@ func jsonError(w http.ResponseWriter, status int, code, msg string) {
 func (a *app) setupStatus(w http.ResponseWriter, r *http.Request) {
 	var n int
 	_ = a.db.QueryRow("SELECT count(*) FROM users WHERE role='admin'").Scan(&n)
-	json.NewEncoder(w).Encode(map[string]bool{"needs_setup": n == 0})
+	result := map[string]any{"needs_setup": n == 0}
+	if a.docker != nil {
+		result["infrastructure"] = a.docker.Snapshot(r.Context())
+	}
+	json.NewEncoder(w).Encode(result)
 }
 func (a *app) setupAdmin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
