@@ -443,6 +443,9 @@ func (a *app) projectRoute(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, 500, "internal_error", "Não foi possível atualizar o projeto.")
 		return
 	}
+	if userID, ok := r.Context().Value(userKey{}).(int64); ok {
+		a.audit(userID, "project.updated", "project", id)
+	}
 	a.publish("project.updated", map[string]any{"id": id})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -537,6 +540,9 @@ func (a *app) applicationRoute(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonError(w, 500, "internal_error", "Não foi possível atualizar a aplicação.")
 		return
+	}
+	if userID, ok := r.Context().Value(userKey{}).(int64); ok {
+		a.audit(userID, "application.updated", "application", id)
 	}
 	a.publish("application.updated", map[string]any{"id": id})
 	w.WriteHeader(http.StatusNoContent)
