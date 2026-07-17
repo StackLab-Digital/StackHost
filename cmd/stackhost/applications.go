@@ -306,8 +306,10 @@ func (a *app) applicationRuntime(w http.ResponseWriter, r *http.Request, id int6
 	_ = a.db.QueryRow("SELECT runtime_mode FROM environment_settings WHERE id=1").Scan(&mode)
 	services := []map[string]any{}
 	status := "not_deployed"
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 	if mode == "swarm" {
-		cmd := exec.CommandContext(r.Context(), "docker", "service", "ls", "--filter", "label=com.docker.stack.namespace="+stackName, "--format", "{{json .}}")
+		cmd := exec.CommandContext(ctx, "docker", "service", "ls", "--filter", "label=com.docker.stack.namespace="+stackName, "--format", "{{json .}}")
 		if output, err := cmd.Output(); err == nil {
 			for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
 				var item struct{ Name, Image, Replicas string }
@@ -321,7 +323,7 @@ func (a *app) applicationRuntime(w http.ResponseWriter, r *http.Request, id int6
 			}
 		}
 	} else {
-		cmd := exec.CommandContext(r.Context(), "docker", "compose", "--project-name", stackName, "ps", "--format", "json")
+		cmd := exec.CommandContext(ctx, "docker", "compose", "--project-name", stackName, "ps", "--format", "json")
 		if output, err := cmd.Output(); err == nil {
 			var items []struct{ Service, Image, State string }
 			if json.Unmarshal(output, &items) != nil {

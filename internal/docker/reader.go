@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -106,6 +107,17 @@ func activeSwarm(info swarm.Info) bool {
 
 func NewReader() (*Reader, error) {
 	host := os.Getenv("STACKHOST_DOCKER_HOST")
+	if host == "" {
+		host = os.Getenv("DOCKER_HOST")
+	}
+	if host == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			desktopSocket := filepath.Join(home, ".docker", "run", "docker.sock")
+			if _, err := os.Stat(desktopSocket); err == nil {
+				host = "unix://" + desktopSocket
+			}
+		}
+	}
 	opts := []client.Opt{client.FromEnv}
 	if host != "" {
 		opts = []client.Opt{client.WithHost(host)}

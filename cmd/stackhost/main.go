@@ -119,29 +119,30 @@ func migrate(db *sql.DB) error {
 	}
 	var version2 int
 	_ = db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=2").Scan(&version2)
-	if version2 > 0 {
-		_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS environment_settings(id INTEGER PRIMARY KEY, runtime_mode TEXT NOT NULL DEFAULT 'standalone', updated_at TEXT NOT NULL)`)
-		_, _ = db.Exec(`INSERT INTO environment_settings(id,runtime_mode,updated_at) SELECT 1,'standalone',? WHERE NOT EXISTS (SELECT 1 FROM environment_settings WHERE id=1)`, time.Now().UTC().Format(time.RFC3339))
-		return nil
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, column := range []string{"description TEXT NOT NULL DEFAULT ''", "configuration_status TEXT NOT NULL DEFAULT 'draft'", "configured_at TEXT", "last_validated_at TEXT", "source_revision INTEGER NOT NULL DEFAULT 0"} {
-		if _, err = tx.Exec("ALTER TABLE applications ADD COLUMN " + column); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+	if version2 == 0 {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		for _, column := range []string{"description TEXT NOT NULL DEFAULT ''", "configuration_status TEXT NOT NULL DEFAULT 'draft'", "configured_at TEXT", "last_validated_at TEXT", "source_revision INTEGER NOT NULL DEFAULT 0"} {
+			if _, err = tx.Exec("ALTER TABLE applications ADD COLUMN " + column); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+				return err
+			}
+		}
+		if _, err = tx.Exec(`UPDATE applications SET configuration_status='draft' WHERE status='unknown'; CREATE TABLE IF NOT EXISTS application_sources(id INTEGER PRIMARY KEY, application_id INTEGER NOT NULL UNIQUE REFERENCES applications(id) ON DELETE CASCADE, source_type TEXT NOT NULL, encrypted_payload BLOB NOT NULL, encryption_nonce BLOB NOT NULL, payload_version INTEGER NOT NULL DEFAULT 1, checksum TEXT NOT NULL, validation_status TEXT NOT NULL DEFAULT 'draft', validation_errors TEXT NOT NULL DEFAULT '[]', validation_warnings TEXT NOT NULL DEFAULT '[]', summary_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_application_sources_application ON application_sources(application_id); INSERT INTO schema_migrations(version,applied_at) VALUES(2,?)`, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
 			return err
 		}
 	}
-	if _, err = tx.Exec(`UPDATE applications SET configuration_status='draft' WHERE status='unknown'; CREATE TABLE IF NOT EXISTS application_sources(id INTEGER PRIMARY KEY, application_id INTEGER NOT NULL UNIQUE REFERENCES applications(id) ON DELETE CASCADE, source_type TEXT NOT NULL, encrypted_payload BLOB NOT NULL, encryption_nonce BLOB NOT NULL, payload_version INTEGER NOT NULL DEFAULT 1, checksum TEXT NOT NULL, validation_status TEXT NOT NULL DEFAULT 'draft', validation_errors TEXT NOT NULL DEFAULT '[]', validation_warnings TEXT NOT NULL DEFAULT '[]', summary_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_application_sources_application ON application_sources(application_id); INSERT INTO schema_migrations(version,applied_at) VALUES(2,?)`, time.Now().UTC().Format(time.RFC3339)); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS environment_settings(id INTEGER PRIMARY KEY, runtime_mode TEXT NOT NULL DEFAULT 'standalone', updated_at TEXT NOT NULL); INSERT OR IGNORE INTO environment_settings(id,runtime_mode,updated_at) VALUES(1,'standalone',?)`, time.Now().UTC().Format(time.RFC3339)); err != nil {
-		return err
+	var version3 int
+	_ = db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=3").Scan(&version3)
+	if version3 == 0 {
+		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS environment_settings(id INTEGER PRIMARY KEY, runtime_mode TEXT NOT NULL DEFAULT 'standalone', updated_at TEXT NOT NULL); INSERT OR IGNORE INTO environment_settings(id,runtime_mode,updated_at) VALUES(1,'standalone',?); INSERT INTO schema_migrations(version,applied_at) VALUES(3,?)`, time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -201,7 +202,7 @@ func (a *app) ready(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var migrations int
-	if err := a.db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=2").Scan(&migrations); err != nil || migrations != 1 {
+	if err := a.db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=3").Scan(&migrations); err != nil || migrations != 1 {
 		http.Error(w, `{"status":"not_ready","reason":"migrations"}`, 503)
 		return
 	}
