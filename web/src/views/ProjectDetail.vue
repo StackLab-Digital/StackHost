@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import BaseModal from "../components/ui/BaseModal.vue";
 import ComposeCodeEditor from "../components/applications/ComposeCodeEditor.vue";
+import SourceSummary from "../components/applications/SourceSummary.vue";
+import WizardStepper from "../components/applications/WizardStepper.vue";
 import { api, RequestError } from "../composables/useApi";
 import { useToast } from "../composables/useToast";
 import type { Application, Project } from "../types";
@@ -444,20 +446,7 @@ onMounted(load);
     @close="closeWizard"
   >
     <form v-if="!editApp.id" id="new-app-form" @submit.prevent="submitCreate">
-      <nav class="wizard-stepper" aria-label="Progresso da criação">
-        <span
-          v-for="(label, index) in [
-            'Identificação',
-            'Origem',
-            'Configuração',
-            'Revisão',
-          ]"
-          :key="label"
-          :class="{ active: appStep === index + 1, done: appStep > index + 1 }"
-          :aria-current="appStep === index + 1 ? 'step' : undefined"
-          >{{ index + 1 }}. {{ label }}</span
-        >
-      </nav>
+      <WizardStepper :step="appStep" />
       <p class="kicker">ETAPA {{ appStep }} DE 4</p>
       <div v-if="appStep === 1">
         <h2>Identifique a aplicação</h2>
@@ -526,26 +515,12 @@ onMounted(load);
               v-model="newSource.compose_yaml"
               @error="toast.error"
             />
-            <aside class="source-summary">
-              <h3>Resumo detectado</h3>
-              <p v-if="!newSource.compose_yaml" class="muted">
-                Valide o Compose para visualizar os serviços detectados.
-              </p>
-              <template v-else>
-                <p>
-                  <span>Serviços</span
-                  ><strong>{{ composeSummary.services.length }}</strong>
-                </p>
-                <p>
-                  <span>Imagens</span
-                  ><strong>{{ composeSummary.images.length }}</strong>
-                </p>
-                <p>
-                  <span>Portas</span
-                  ><strong>{{ composeSummary.ports.length }}</strong>
-                </p>
-              </template>
-            </aside>
+            <SourceSummary
+              :services="composeSummary.services"
+              :images="composeSummary.images"
+              :ports="composeSummary.ports"
+              :empty="!newSource.compose_yaml"
+            />
           </div>
           <small v-if="fieldErrors.source" class="error-field">{{
             fieldErrors.source
