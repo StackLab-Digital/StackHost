@@ -111,6 +111,20 @@ func TestHealthEndpoints(t *testing.T) {
 	}
 }
 
+func TestInfrastructureWithoutDocker(t *testing.T) {
+	a := testApp(t)
+	a.docker = nil
+	w := httptest.NewRecorder()
+	a.infrastructure(w, httptest.NewRequest(http.MethodGet, "/api/v1/infrastructure", nil))
+	var payload map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["available"] != false || payload["message"] == nil {
+		t.Fatalf("docker fallback = %#v", payload)
+	}
+}
+
 func TestCleanDatabaseIntegrationFlow(t *testing.T) {
 	a := testApp(t)
 	setup := httptest.NewRecorder()

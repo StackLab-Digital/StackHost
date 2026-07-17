@@ -559,7 +559,7 @@ func (a *app) infrastructure(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(a.docker.Snapshot(r.Context()))
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]any{"docker": map[string]any{"available": false, "message": "Docker não está conectado."}, "swarm": map[string]any{"active": false, "message": "O host não está conectado a um Swarm."}, "nodes": []any{}, "services": []any{}})
+	json.NewEncoder(w).Encode(map[string]any{"available": false, "message": "Docker não está conectado.", "swarm": map[string]any{"active": false, "message": "O host não está conectado a um Swarm."}, "nodes": []any{}, "services": []any{}})
 }
 func (a *app) infrastructureNodes(w http.ResponseWriter, r *http.Request) {
 	if a.docker == nil {
