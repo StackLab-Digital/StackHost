@@ -9,7 +9,10 @@ import {
 import {
   bracketMatching,
   indentOnInput,
+  HighlightStyle,
+  syntaxHighlighting,
 } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import {
   defaultKeymap,
@@ -39,13 +42,29 @@ const emit = defineEmits<{
 }>();
 const editorHost = ref<HTMLElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
+const cursorLine = ref(1);
+const cursorColumn = ref(1);
 let view: EditorView | null = null;
+function updateCursor(state: EditorState) {
+  const position = state.doc.lineAt(state.selection.main.head);
+  cursorLine.value = position.number;
+  cursorColumn.value = state.selection.main.head - position.from + 1;
+}
 
 const example = `services:
   web:
     image: nginx:1.27-alpine
     ports:
       - "8080:80"`;
+const composeHighlight = HighlightStyle.define([
+  { tag: tags.propertyName, color: "#8bd5ca" },
+  { tag: tags.string, color: "#f5c77a" },
+  { tag: tags.number, color: "#b7a5ff" },
+  { tag: tags.bool, color: "#e8f55b" },
+  { tag: tags.comment, color: "#737985", fontStyle: "italic" },
+  { tag: tags.punctuation, color: "#aeb4c0" },
+  { tag: tags.operatorKeyword, color: "#f08cae" },
+]);
 
 function createState(value: string) {
   return EditorState.create({
@@ -54,6 +73,7 @@ function createState(value: string) {
       lineNumbers(),
       history(),
       yaml(),
+      syntaxHighlighting(composeHighlight),
       autocompletion(),
       bracketMatching(),
       closeBrackets(),
@@ -83,6 +103,7 @@ function createState(value: string) {
         indentWithTab,
       ]),
       EditorView.updateListener.of((update) => {
+        if (update.selectionSet || update.docChanged) updateCursor(update.state);
         if (update.docChanged)
           emit("update:modelValue", update.state.doc.toString());
       }),
@@ -158,6 +179,7 @@ onMounted(() => {
       state: createState(props.modelValue),
       parent: editorHost.value,
     });
+    updateCursor(view.state);
   }
 });
 onBeforeUnmount(() => view?.destroy());
@@ -185,7 +207,7 @@ watch(() => props.modelValue, setValue);
       />
     </div>
     <div class="compose-statusbar">
-      <span>Ln 1, Col 1 · {{ modelValue.split("\n").length }} linhas</span><span>YAML · {{ validation === 'valid' ? 'Válido' : validation === 'warning' ? 'Avisos' : validation === 'invalid' ? 'Inválido' : 'Não validado' }}</span>
+      <span>Ln {{ cursorLine }}, Col {{ cursorColumn }} · {{ modelValue.split("\n").length }} linhas</span><span>YAML · {{ validation === 'valid' ? 'Válido' : validation === 'warning' ? 'Avisos' : validation === 'invalid' ? 'Inválido' : 'Não validado' }}</span>
     </div>
   </div>
 </template>

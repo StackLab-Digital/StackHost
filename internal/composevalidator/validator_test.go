@@ -15,3 +15,18 @@ func TestValidateComposeReportsUnsupportedBuild(t *testing.T) {
 		t.Fatalf("expected build validation error: %+v", result)
 	}
 }
+
+func TestValidateComposeExtractsVariables(t *testing.T) {
+	result := Validate("services:\n  web:\n    image: nginx:1.27\n    environment:\n      DATABASE_URL: ${DATABASE_URL}\n      REDIS_URL: ${REDIS_URL:-redis://redis:6379}\n      API_TOKEN: ${API_TOKEN:?Informe}\n  worker:\n    image: worker:1.0\n    environment:\n      DATABASE_URL: ${DATABASE_URL}\n")
+	if len(result.Summary.EnvironmentVariables) != 3 {
+		t.Fatalf("unexpected variables: %+v", result.Summary.EnvironmentVariables)
+	}
+	for _, item := range result.Summary.EnvironmentVariables {
+		if item.Name == "DATABASE_URL" && len(item.Services) != 2 {
+			t.Fatalf("expected service aggregation: %+v", item)
+		}
+		if item.Name == "API_TOKEN" && (!item.Secret || !item.Required) {
+			t.Fatalf("expected secret required variable: %+v", item)
+		}
+	}
+}
