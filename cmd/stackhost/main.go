@@ -160,6 +160,11 @@ func jsonError(w http.ResponseWriter, status int, code, msg string) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": code, "message": msg}})
 }
+func jsonValidation(w http.ResponseWriter, fields map[string]string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": "validation_failed", "message": "Revise os campos informados.", "fields": fields}})
+}
 func (a *app) setupStatus(w http.ResponseWriter, r *http.Request) {
 	var n int
 	_ = a.db.QueryRow("SELECT count(*) FROM users WHERE role='admin'").Scan(&n)
@@ -181,8 +186,22 @@ func (a *app) setupAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct{ Name, Email, Password string }
-	if json.NewDecoder(r.Body).Decode(&in) != nil || strings.TrimSpace(in.Name) == "" || !strings.Contains(in.Email, "@") || len(in.Password) < 8 {
-		jsonError(w, 422, "validation_failed", "Revise os campos informados.")
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		jsonValidation(w, map[string]string{"form": "JSON inválido."})
+		return
+	}
+	fields := map[string]string{}
+	if strings.TrimSpace(in.Name) == "" {
+		fields["name"] = "O nome é obrigatório."
+	}
+	if !strings.Contains(in.Email, "@") {
+		fields["email"] = "Informe um e-mail válido."
+	}
+	if len(in.Password) < 8 {
+		fields["password"] = "Use ao menos 8 caracteres."
+	}
+	if len(fields) > 0 {
+		jsonValidation(w, fields)
 		return
 	}
 	hash, _ := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
@@ -357,8 +376,12 @@ func (a *app) projects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct{ Name, Slug, Description string }
-	if json.NewDecoder(r.Body).Decode(&in) != nil || strings.TrimSpace(in.Name) == "" {
-		jsonError(w, 422, "validation_failed", "O nome é obrigatório.")
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		jsonValidation(w, map[string]string{"form": "JSON inválido."})
+		return
+	}
+	if strings.TrimSpace(in.Name) == "" {
+		jsonValidation(w, map[string]string{"name": "O nome é obrigatório."})
 		return
 	}
 	if in.Slug == "" {
@@ -447,8 +470,12 @@ func (a *app) applications(w http.ResponseWriter, r *http.Request, projectID int
 		return
 	}
 	var in struct{ Name, Slug, SourceType, DockerStackName string }
-	if json.NewDecoder(r.Body).Decode(&in) != nil || strings.TrimSpace(in.Name) == "" {
-		jsonError(w, 422, "validation_failed", "O nome é obrigatório.")
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		jsonValidation(w, map[string]string{"form": "JSON inválido."})
+		return
+	}
+	if strings.TrimSpace(in.Name) == "" {
+		jsonValidation(w, map[string]string{"name": "O nome é obrigatório."})
 		return
 	}
 	if in.SourceType == "" {
