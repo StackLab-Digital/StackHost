@@ -50,6 +50,24 @@ type sourceResult struct {
 	Summary  composevalidator.Summary `json:"summary"`
 }
 
+func (a *app) validateSourcePreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, 405, "method_not_allowed", "Método não permitido.")
+		return
+	}
+	var input struct {
+		SourceType string      `json:"source_type"`
+		Source     sourceInput `json:"source"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024+64*1024)
+	if json.NewDecoder(r.Body).Decode(&input) != nil || !sourceTypeValid(input.SourceType) {
+		jsonValidation(w, map[string]string{"source_type": "Selecione uma origem válida."})
+		return
+	}
+	result := validateSource(input.SourceType, input.Source)
+	json.NewEncoder(w).Encode(result)
+}
+
 func sourceTypeValid(source string) bool {
 	return map[string]bool{"catalog": true, "compose": true, "image": true, "git": true}[source]
 }

@@ -21,6 +21,13 @@ const appModal = ref(false);
 const wizardDiscardOpen = ref(false);
 const deleteApp = ref<Application | null>(null);
 const saving = ref(false);
+const validating = ref(false);
+const validationPreview = ref<{
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  summary?: { services: string[]; images: string[]; ports: string[] };
+} | null>(null);
 const fieldErrors = ref<Record<string, string>>({});
 const editProject = ref({ name: "", description: "" });
 const editApp = ref({ id: 0, name: "" });
@@ -161,7 +168,7 @@ function discardWizard() {
   wizardDiscardOpen.value = false;
   appModal.value = false;
 }
-function nextAppStep() {
+async function nextAppStep() {
   if (appStep.value === 1 && !newApp.value.name.trim()) {
     fieldErrors.value = { name: "O nome é obrigatório." };
     return;
@@ -176,15 +183,37 @@ function nextAppStep() {
       catalogTemplates.value = items;
     });
   }
-  if (
-    appStep.value === 3 &&
-    newApp.value.source_type === "compose" &&
-    !newSource.value.compose_yaml.includes("services:")
-  ) {
-    fieldErrors.value = {
-      source: "Inclua uma seção services válida no Compose.",
-    };
-    return;
+  if (appStep.value === 3 && newApp.value.source_type === "compose") {
+    validating.value = true;
+    try {
+      validationPreview.value = await api<typeof validationPreview.value>(
+        "/api/v1/source/validate",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            source_type: "compose",
+            source: newSource.value,
+          }),
+        },
+      );
+      if (!validationPreview.value?.valid) {
+        fieldErrors.value = {
+          source:
+            validationPreview.value?.errors?.[0] ||
+            "Revise o Compose antes de continuar.",
+        };
+        return;
+      }
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível validar o Compose.",
+      );
+      return;
+    } finally {
+      validating.value = false;
+    }
   }
   if (
     appStep.value === 3 &&
@@ -616,13 +645,17 @@ onMounted(load);
         v-if="!editApp.id && appStep < 4"
         class="primary"
         type="button"
-        :disabled="saving || (appStep === 2 && !newApp.source_type)"
+        :disabled="
+          saving || validating || (appStep === 2 && !newApp.source_type)
+        "
         @click="nextAppStep"
       >
         {{
-          appStep === 3 && newApp.source_type === "compose"
-            ? "Validar e continuar"
-            : "Continuar"
+          validating
+            ? "Validando…"
+            : appStep === 3 && newApp.source_type === "compose"
+              ? "Validar e continuar"
+              : "Continuar"
         }}</button
       ><button
         v-if="!editApp.id && appStep === 4"

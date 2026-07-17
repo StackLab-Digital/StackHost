@@ -152,6 +152,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("/api/v1/projects/", a.auth(a.projectRoute))
 	mux.HandleFunc("/api/v1/applications/", a.auth(a.applicationRouteV2))
 	mux.HandleFunc("/api/v1/catalog", a.auth(a.catalog))
+	mux.HandleFunc("/api/v1/source/validate", a.auth(a.validateSourcePreview))
 	mux.HandleFunc("/api/v1/infrastructure", a.auth(a.infrastructure))
 	mux.HandleFunc("/api/v1/infrastructure/nodes", a.auth(a.infrastructureNodes))
 	mux.HandleFunc("/api/v1/infrastructure/services", a.auth(a.infrastructureServices))
