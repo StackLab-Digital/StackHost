@@ -40,6 +40,11 @@ type attempt struct {
 func main() {
 	addr := getenv("STACKHOST_HTTP_ADDR", ":8080")
 	dataDir := getenv("STACKHOST_DATA_DIR", "./data")
+	appEnv := getenv("STACKHOST_APP_ENV", "development")
+	sessionSecret := getenv("STACKHOST_SESSION_SECRET", "development-only-change-me")
+	if appEnv == "production" && (sessionSecret == "development-only-change-me" || len(sessionSecret) < 32) {
+		panic("STACKHOST_SESSION_SECRET must be a strong value in production")
+	}
 	if err := os.MkdirAll(dataDir, 0750); err != nil {
 		panic(err)
 	}
@@ -52,7 +57,7 @@ func main() {
 		panic(err)
 	}
 	dr, _ := dockerreader.NewReader()
-	a := &app{db: db, sessionSecret: getenv("STACKHOST_SESSION_SECRET", "development-only-change-me"), events: make(chan map[string]any, 32), docker: dr, loginAttempts: make(map[string]attempt)}
+	a := &app{db: db, sessionSecret: sessionSecret, events: make(chan map[string]any, 32), docker: dr, loginAttempts: make(map[string]attempt)}
 	s := &http.Server{Addr: addr, Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
