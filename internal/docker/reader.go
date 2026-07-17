@@ -8,6 +8,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/swarm"
+	"github.com/docker/docker/api/types/volume"
 	client "github.com/docker/docker/client"
 )
 
@@ -19,6 +20,9 @@ type Snapshot struct {
 	Containers      int    `json:"containers"`
 	Running         int    `json:"running"`
 	Images          int    `json:"images"`
+	Networks        int    `json:"networks"`
+	Volumes         int    `json:"volumes"`
+	Stacks          int    `json:"stacks"`
 	OperatingSystem string `json:"operating_system,omitempty"`
 	CPUs            int    `json:"cpus,omitempty"`
 	MemoryBytes     int64  `json:"memory_bytes,omitempty"`
@@ -50,6 +54,10 @@ type Service struct {
 	Replicas uint64 `json:"replicas"`
 	Running  uint64 `json:"running"`
 	Desired  uint64 `json:"desired"`
+}
+
+func activeSwarm(info swarm.Info) bool {
+	return info.LocalNodeState == swarm.LocalNodeStateActive
 }
 
 func NewReader() (*Reader, error) {
@@ -86,7 +94,13 @@ func (r *Reader) Snapshot(ctx context.Context) Snapshot {
 		out.CPUs = info.NCPU
 		out.MemoryBytes = info.MemTotal
 	}
-	if info.Swarm.LocalNodeState != swarm.LocalNodeStateActive {
+	if networks, err := r.client.NetworkList(ctx, types.NetworkListOptions{}); err == nil {
+		out.Networks = len(networks)
+	}
+	if volumes, err := r.client.VolumeList(ctx, volume.ListOptions{}); err == nil {
+		out.Volumes = len(volumes.Volumes)
+	}
+	if !activeSwarm(info.Swarm) {
 		out.Swarm.Message = "O host não está em um Swarm."
 		return out
 	}
@@ -116,6 +130,13 @@ func (r *Reader) Snapshot(ctx context.Context) Snapshot {
 	services, err := r.client.ServiceList(ctx, types.ServiceListOptions{})
 	if err == nil {
 		out.Swarm.Services = len(services)
+		stacks := make(map[string]struct{})
+		for _, service := range services {
+			if name := service.Spec.Labels["com.docker.stack.namespace"]; name != "" {
+				stacks[name] = struct{}{}
+			}
+		}
+		out.Stacks = len(stacks)
 	}
 	if tasks, err := r.client.TaskList(ctx, types.TaskListOptions{}); err == nil {
 		for _, task := range tasks {
