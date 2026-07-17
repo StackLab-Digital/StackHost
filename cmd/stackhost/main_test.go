@@ -110,3 +110,39 @@ func TestHealthEndpoints(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanDatabaseIntegrationFlow(t *testing.T) {
+	a := testApp(t)
+	setup := httptest.NewRecorder()
+	a.setupAdmin(setup, httptest.NewRequest(http.MethodPost, "/api/v1/setup/admin", strings.NewReader(`{"name":"Admin","email":"admin@example.com","password":"password123"}`)))
+	cookie := setup.Result().Cookies()[0]
+	project := httptest.NewRecorder()
+	projectReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(`{"name":"Production"}`))
+	projectReq.AddCookie(cookie)
+	a.auth(a.projects)(project, projectReq)
+	if project.Code != http.StatusOK {
+		t.Fatalf("integration project status = %d", project.Code)
+	}
+	application := httptest.NewRecorder()
+	applicationReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/applications", strings.NewReader(`{"name":"API","source_type":"compose"}`))
+	applicationReq.AddCookie(cookie)
+	a.auth(a.projectRoute)(application, applicationReq)
+	if application.Code != http.StatusOK {
+		t.Fatalf("integration application status = %d", application.Code)
+	}
+	dashboard := httptest.NewRecorder()
+	dashboardReq := httptest.NewRequest(http.MethodGet, "/api/v1/dashboard", nil)
+	dashboardReq.AddCookie(cookie)
+	a.auth(a.dashboard)(dashboard, dashboardReq)
+	var payload struct {
+		Projects     int   `json:"projects"`
+		Applications int   `json:"applications"`
+		Activity     []any `json:"activity"`
+	}
+	if err := json.NewDecoder(dashboard.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Projects != 1 || payload.Applications != 1 || len(payload.Activity) == 0 {
+		t.Fatalf("dashboard payload = %#v", payload)
+	}
+}
