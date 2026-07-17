@@ -143,6 +143,11 @@ func (a *app) ready(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"status":"not_ready"}`, 503)
 		return
 	}
+	var migrations int
+	if err := a.db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=1").Scan(&migrations); err != nil || migrations != 1 {
+		http.Error(w, `{"status":"not_ready","reason":"migrations"}`, 503)
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
 }
 func jsonError(w http.ResponseWriter, status int, code, msg string) {
