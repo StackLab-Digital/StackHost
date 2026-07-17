@@ -476,9 +476,6 @@ h2 {
 .application-wizard-foot { display: flex; align-items: center; justify-content: space-between; border-top: 0; border-bottom: 0; }
 .wizard-foot-actions { display: flex; gap: 10px; }
 .compose-step, .compose-workspace, .compose-editor-shell { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.compose-step-header { flex: 0 0 auto; margin: 0 0 12px; padding: 0; border: 0; }
-.compose-step-header h2 { margin: 0; }
-.compose-step-header p { margin: 4px 0 0; }
 .compose-workspace { width: 100%; }
 .compose-editor-main { flex: 1; min-height: 0; overflow: hidden; }
 .compose-editor-shell--fill { height: 100%; }
