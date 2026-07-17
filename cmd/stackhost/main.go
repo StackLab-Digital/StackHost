@@ -226,7 +226,11 @@ func (a *app) dashboard(w http.ResponseWriter, r *http.Request) {
 	var projects, apps int
 	a.db.QueryRow("SELECT count(*) FROM projects").Scan(&projects)
 	a.db.QueryRow("SELECT count(*) FROM applications").Scan(&apps)
-	json.NewEncoder(w).Encode(map[string]any{"projects": projects, "applications": apps, "infrastructure": map[string]any{"docker": "unknown", "swarm": "unknown"}})
+	infra := any(map[string]any{"docker": "unknown", "swarm": "unknown"})
+	if a.docker != nil {
+		infra = a.docker.Snapshot(r.Context())
+	}
+	json.NewEncoder(w).Encode(map[string]any{"projects": projects, "applications": apps, "infrastructure": infra})
 }
 func (a *app) audit(userID int64, action, resource string, resourceID any) {
 	now := time.Now().UTC().Format(time.RFC3339)
