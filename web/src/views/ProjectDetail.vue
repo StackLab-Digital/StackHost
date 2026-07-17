@@ -3,9 +3,11 @@ import { computed, onMounted, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import BaseModal from "../components/ui/BaseModal.vue";
 import ComposeCodeEditor from "../components/applications/ComposeCodeEditor.vue";
+import ApplicationWizard from "../components/applications/ApplicationWizard.vue";
 import SourceSummary from "../components/applications/SourceSummary.vue";
 import WizardStepper from "../components/applications/WizardStepper.vue";
 import EnvironmentVariablesEditor from "../components/applications/EnvironmentVariablesEditor.vue";
+import SourceValidationPanel from "../components/applications/SourceValidationPanel.vue";
 import { api, RequestError } from "../composables/useApi";
 import { useToast } from "../composables/useToast";
 import type { Application, Project } from "../types";
@@ -20,6 +22,8 @@ const error = ref("");
 const projectModal = ref(false);
 const appModal = ref(false);
 const wizardDiscardOpen = ref(false);
+const sourceChangeOpen = ref(false);
+const pendingSourceType = ref("");
 const deleteApp = ref<Application | null>(null);
 const saving = ref(false);
 const validating = ref(false);
@@ -42,7 +46,7 @@ const appStep = ref(1);
 const newSource = ref({
   compose_yaml: "",
   image: "",
-  container_port: "",
+  container_port: null as number | null,
   replicas: 1,
   repository_url: "",
   branch: "main",
@@ -76,6 +80,8 @@ const composeSummary = computed(() => {
     ports: [...yaml.matchAll(/^\s+-\s*["']?([^"']+)["']?\s*$/gm)]
       .map((match) => match[1])
       .filter((port) => port.includes(":")),
+    volumes: [...yaml.matchAll(/^\s+volumes:\s*$/gm)].map(() => "volume"),
+    networks: [...yaml.matchAll(/^\s+networks:\s*$/gm)].map(() => "network"),
   };
 });
 const selectedCatalog = computed(() =>
@@ -83,6 +89,27 @@ const selectedCatalog = computed(() =>
     (template) => template.slug === newSource.value.template_slug,
   ),
 );
+const slugPreview = computed(() =>
+  newApp.value.name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 100) || "nome-da-aplicacao",
+);
+const catalogCategories = computed(() => [
+  ...new Set(catalogTemplates.value.map((template) => template.category)),
+]);
+const catalogQuery = ref("");
+const catalogCategory = ref("all");
+const visibleCatalogTemplates = computed(() => {
+  const query = catalogQuery.value.trim().toLowerCase();
+  return catalogTemplates.value.filter(
+    (template) =>
+      (!query || `${template.name} ${template.description}`.toLowerCase().includes(query)) &&
+      (catalogCategory.value === "all" || template.category === catalogCategory.value),
+  );
+});
 const sources = [
   {
     value: "catalog",
@@ -149,7 +176,7 @@ function openCreateApp() {
   newSource.value = {
     compose_yaml: "",
     image: "",
-    container_port: "",
+    container_port: null,
     replicas: 1,
     repository_url: "",
     branch: "main",
@@ -181,6 +208,30 @@ function discardWizard() {
   wizardDiscardOpen.value = false;
   appModal.value = false;
 }
+function selectSourceType(sourceType: string) {
+  if (newApp.value.source_type && newApp.value.source_type !== sourceType) {
+    pendingSourceType.value = sourceType;
+    sourceChangeOpen.value = true;
+    return;
+  }
+  newApp.value.source_type = sourceType;
+}
+function confirmSourceChange() {
+  newApp.value.source_type = pendingSourceType.value;
+  newSource.value = {
+    ...newSource.value,
+    compose_yaml: "",
+    image: "",
+    container_port: null,
+    repository_url: "",
+    environment: [],
+    template_slug: "",
+    template_version: "",
+  };
+  validationPreview.value = null;
+  fieldErrors.value = {};
+  sourceChangeOpen.value = false;
+}
 async function nextAppStep() {
   if (appStep.value === 1 && !newApp.value.name.trim()) {
     fieldErrors.value = { name: "O nome é obrigatório." };
@@ -196,7 +247,7 @@ async function nextAppStep() {
       catalogTemplates.value = items;
     });
   }
-  if (appStep.value === 3 && newApp.value.source_type === "compose") {
+  if (appStep.value === 3) {
     validating.value = true;
     try {
       validationPreview.value = await api<typeof validationPreview.value>(
@@ -204,7 +255,7 @@ async function nextAppStep() {
         {
           method: "POST",
           body: JSON.stringify({
-            source_type: "compose",
+            source_type: newApp.value.source_type,
             source: newSource.value,
           }),
         },
@@ -221,7 +272,7 @@ async function nextAppStep() {
       toast.error(
         err instanceof Error
           ? err.message
-          : "Não foi possível validar o Compose.",
+          : "Não foi possível validar a origem.",
       );
       return;
     } finally {
@@ -481,11 +532,19 @@ onMounted(load);
       </button></template
     >
   </BaseModal>
-  <BaseModal
+  <ApplicationWizard
     :open="appModal"
-    :title="editApp.id ? 'Editar aplicação' : 'Nova aplicação'"
-    description="Defina a origem e revise a configuração antes de criar."
+    :editing="Boolean(editApp.id)"
+    :step="appStep"
+    :busy="saving"
+    :validating="validating"
+    :source-type="newApp.source_type"
     @close="closeWizard"
+    @back="appStep -= 1"
+    @next="nextAppStep"
+    @draft="createApp(true)"
+    @create="submitCreate"
+    @save="saveApp"
   >
     <form v-if="!editApp.id" id="new-app-form" @submit.prevent="submitCreate">
       <WizardStepper :step="appStep" />
@@ -521,13 +580,9 @@ onMounted(load);
             ></label
           >
         </details>
-        <p class="muted">
-          Slug:
-          {{
-            newApp.name.toLowerCase().trim().replace(/\s+/g, "-") ||
-            "nome-da-aplicacao"
-          }}
-        </p>
+        <div class="source-preview identity-preview">
+          <span>Identificador</span><strong>{{ slugPreview }}</strong>
+        </div>
       </div>
       <div v-else-if="appStep === 2">
         <h2>Escolha a origem</h2>
@@ -538,7 +593,7 @@ onMounted(load);
             type="button"
             class="source-option"
             :class="{ selected: newApp.source_type === source.value }"
-            @click="newApp.source_type = source.value"
+            @click="selectSourceType(source.value)"
           >
             <strong>{{ source.label }}</strong
             ><small>{{ source.detail }}</small>
@@ -561,9 +616,17 @@ onMounted(load);
               :services="composeSummary.services"
               :images="composeSummary.images"
               :ports="composeSummary.ports"
+              :volumes="composeSummary.volumes"
+              :networks="composeSummary.networks"
               :empty="!newSource.compose_yaml"
             />
           </div>
+          <SourceValidationPanel
+            v-if="validationPreview"
+            :valid="validationPreview.valid"
+            :errors="validationPreview.errors"
+            :warnings="validationPreview.warnings"
+          />
           <small v-if="fieldErrors.source" class="error-field">{{
             fieldErrors.source
           }}</small>
@@ -572,16 +635,17 @@ onMounted(load);
           v-else-if="newApp.source_type === 'image'"
           class="source-form-stack"
         >
+          <h3>Configure a imagem Docker</h3>
           <label
-            >Imagem Docker<input
+            >Imagem<input
               v-model="newSource.image"
               required
               placeholder="nginx:1.27-alpine" /></label
           ><small class="muted"
             >Imagem que será utilizada para iniciar a aplicação.</small
           ><label
-            >Porta interna<input
-              v-model="newSource.container_port"
+            >Porta interna (opcional)<input
+              v-model.number="newSource.container_port"
               type="number"
               min="1"
               placeholder="Ex.: 80"
@@ -597,7 +661,13 @@ onMounted(load);
                 "
               >
                 −</button
-              ><output>{{ newSource.replicas }}</output
+              ><input
+                v-model.number="newSource.replicas"
+                type="number"
+                min="1"
+                max="20"
+                aria-label="Quantidade de réplicas"
+              />
               ><button
                 type="button"
                 aria-label="Aumentar réplicas"
@@ -627,6 +697,7 @@ onMounted(load);
           <EnvironmentVariablesEditor v-model="newSource.environment" />
         </div>
         <div v-else-if="newApp.source_type === 'git'" class="source-form-stack">
+          <h3>Configure o repositório Git</h3>
           <label
             >URL do repositório<input
               v-model="newSource.repository_url"
@@ -662,8 +733,15 @@ onMounted(load);
           <EnvironmentVariablesEditor v-model="newSource.environment" />
         </div>
         <div v-else-if="newApp.source_type === 'catalog'" class="source-grid">
+          <div class="catalog-toolbar full-width">
+            <input v-model="catalogQuery" placeholder="Buscar templates" aria-label="Buscar templates" />
+            <select v-model="catalogCategory" aria-label="Filtrar por categoria">
+              <option value="all">Todas as categorias</option>
+              <option v-for="category in catalogCategories" :key="category" :value="category">{{ category }}</option>
+            </select>
+          </div>
           <button
-            v-for="template in catalogTemplates"
+            v-for="template in visibleCatalogTemplates"
             :key="template.slug"
             type="button"
             class="source-option"
@@ -732,69 +810,11 @@ onMounted(load);
         </p>
       </div>
     </form>
-    <form v-else id="edit-app-form" @submit.prevent="saveApp">
+    <template #edit><form id="edit-app-form" @submit.prevent="saveApp">
       <label>Nome<input v-model="editApp.name" required autofocus /></label>
       <p class="muted">Edite a configuração da origem na tela da aplicação.</p>
-    </form>
-    <template #footer
-      ><button
-        class="secondary"
-        type="button"
-        :disabled="saving"
-        @click="closeWizard"
-      >
-        Cancelar</button
-      ><button
-        v-if="!editApp.id && appStep > 1"
-        class="secondary"
-        type="button"
-        :disabled="saving"
-        @click="appStep -= 1"
-      >
-        Voltar</button
-      ><button
-        v-if="!editApp.id && appStep < 4"
-        class="primary"
-        type="button"
-        :disabled="
-          saving || validating || (appStep === 2 && !newApp.source_type)
-        "
-        @click="nextAppStep"
-      >
-        {{
-          validating
-            ? "Validando…"
-            : appStep === 3 && newApp.source_type === "compose"
-              ? "Validar e continuar"
-              : "Continuar"
-        }}</button
-      ><button
-        v-if="!editApp.id && appStep === 4"
-        class="secondary"
-        type="button"
-        :disabled="saving"
-        @click="createApp(true)"
-      >
-        Salvar como rascunho</button
-      ><button
-        v-if="!editApp.id && appStep === 4"
-        class="primary"
-        form="new-app-form"
-        type="submit"
-        :disabled="saving"
-      >
-        {{ saving ? "Criando…" : "Criar aplicação" }}</button
-      ><button
-        v-if="editApp.id"
-        class="primary"
-        form="edit-app-form"
-        type="submit"
-        :disabled="saving"
-      >
-        {{ saving ? "Salvando…" : "Salvar alterações" }}
-      </button></template
-    >
-  </BaseModal>
+    </form></template>
+  </ApplicationWizard>
   <BaseModal
     :open="wizardDiscardOpen"
     title="Descartar configuração?"
@@ -811,6 +831,21 @@ onMounted(load);
       </button>
       <button class="danger" type="button" @click="discardWizard">
         Descartar
+      </button>
+    </template>
+  </BaseModal>
+  <BaseModal
+    :open="sourceChangeOpen"
+    title="Trocar origem?"
+    description="Os dados preenchidos para a origem atual serão removidos."
+    @close="sourceChangeOpen = false"
+  >
+    <template #footer>
+      <button class="secondary" type="button" @click="sourceChangeOpen = false">
+        Continuar editando
+      </button>
+      <button class="danger" type="button" @click="confirmSourceChange">
+        Trocar origem
       </button>
     </template>
   </BaseModal>

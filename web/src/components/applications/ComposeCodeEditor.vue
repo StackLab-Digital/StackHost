@@ -2,6 +2,16 @@
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { yaml } from "@codemirror/lang-yaml";
 import {
+  autocompletion,
+  closeBrackets,
+  closeBracketsKeymap,
+} from "@codemirror/autocomplete";
+import {
+  bracketMatching,
+  indentOnInput,
+} from "@codemirror/language";
+import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
+import {
   defaultKeymap,
   indentWithTab,
   history,
@@ -23,6 +33,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   "update:modelValue": [value: string];
   validate: [];
+  save: [];
   error: [message: string];
 }>();
 const editorHost = ref<HTMLElement | null>(null);
@@ -42,6 +53,11 @@ function createState(value: string) {
       lineNumbers(),
       history(),
       yaml(),
+      autocompletion(),
+      bracketMatching(),
+      closeBrackets(),
+      indentOnInput(),
+      highlightSelectionMatches(),
       drawSelection(),
       highlightActiveLine(),
       keymap.of([
@@ -52,8 +68,17 @@ function createState(value: string) {
             return true;
           },
         },
+        {
+          key: "Mod-s",
+          run: () => {
+            emit("save");
+            return true;
+          },
+        },
         ...defaultKeymap,
         ...historyKeymap,
+        ...searchKeymap,
+        ...closeBracketsKeymap,
         indentWithTab,
       ]),
       EditorView.updateListener.of((update) => {

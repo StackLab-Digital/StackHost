@@ -403,6 +403,7 @@ onMounted(load);
         <ComposeCodeEditor
           v-model="composeYaml"
           @validate="validateSource"
+          @save="saveSource"
           @error="toast.error"
         />
       </div>

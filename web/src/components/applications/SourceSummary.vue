@@ -3,6 +3,8 @@ defineProps<{
   services: string[];
   images: string[];
   ports: string[];
+  volumes?: string[];
+  networks?: string[];
   empty?: boolean;
 }>();
 </script>
@@ -21,6 +23,12 @@ defineProps<{
       </p>
       <p>
         <span>Portas</span><strong>{{ ports.length }}</strong>
+      </p>
+      <p v-if="volumes?.length">
+        <span>Volumes</span><strong>{{ volumes.length }}</strong>
+      </p>
+      <p v-if="networks?.length">
+        <span>Redes</span><strong>{{ networks.length }}</strong>
       </p>
     </template>
   </aside>
