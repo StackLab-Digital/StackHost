@@ -486,7 +486,7 @@ h2 {
 .compose-toolbar { flex: 0 0 42px; min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; }
 .compose-toolbar-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .editor-toolbar-button { height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #363a43; border-radius: 6px; background: #1b1e24; color: inherit; font-size: 12px; line-height: 1; }
-.editor-menu { position: relative; }
+.editor-menu { position: relative; margin-top: 0; padding-top: 0; border-top: 0; }
 .editor-menu summary { list-style: none; cursor: pointer; }
 .editor-menu summary::-webkit-details-marker { display: none; }
 .editor-menu-content { position: absolute; z-index: 3; right: 0; top: 34px; display: grid; min-width: 170px; padding: 5px; border: 1px solid #363a43; border-radius: 6px; background: #1b1e24; box-shadow: 0 8px 24px #0008; }
