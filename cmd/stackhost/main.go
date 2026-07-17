@@ -296,7 +296,16 @@ func (a *app) dashboard(w http.ResponseWriter, r *http.Request) {
 	if a.docker != nil {
 		infra = a.docker.Snapshot(r.Context())
 	}
-	json.NewEncoder(w).Encode(map[string]any{"projects": projects, "applications": apps, "infrastructure": infra})
+	recent := []any{}
+	if rows, err := a.db.Query("SELECT action,coalesce(resource_type,''),created_at FROM audit_logs ORDER BY id DESC LIMIT 5"); err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var action, resource, created string
+			rows.Scan(&action, &resource, &created)
+			recent = append(recent, map[string]string{"action": action, "resource_type": resource, "created_at": created})
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]any{"projects": projects, "applications": apps, "infrastructure": infra, "activity": recent})
 }
 func (a *app) audit(userID int64, action, resource string, resourceID any) {
 	now := time.Now().UTC().Format(time.RFC3339)
