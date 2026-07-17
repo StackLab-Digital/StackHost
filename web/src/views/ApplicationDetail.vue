@@ -24,6 +24,7 @@ type ApplicationData = {
   source_revision: number;
   project: { id: number; name: string };
   activity: Array<{ description: string; created_at: string }>;
+  source_summary?: { environment_variables?: Array<{ name: string; default_value?: string; required?: boolean; secret?: boolean; services?: string[] }> };
 };
 type SourceData = {
   source_type: string;
@@ -40,6 +41,7 @@ type Validation = {
     ports: string[];
     volumes: string[];
     networks: string[];
+    environment_variables?: Array<{ name: string; default_value?: string; required?: boolean; secret?: boolean; services?: string[] }>;
   };
 };
 
@@ -69,6 +71,7 @@ const branch = ref("main");
 const dockerfilePath = ref("Dockerfile");
 const buildContext = ref(".");
 const variables = ref<Variable[]>([]);
+const detectedVariables = ref<NonNullable<Validation["summary"]["environment_variables"]>>([]);
 const sourceTypes = [
   { value: "compose", label: "Docker Compose" },
   { value: "image", label: "Imagem Docker" },
@@ -93,6 +96,7 @@ async function load() {
     application.value = await api<ApplicationData>(
       `/api/v1/applications/${route.params.applicationId}`,
     );
+    detectedVariables.value = application.value.source_summary?.environment_variables || [];
     await loadSource();
   } catch (err) {
     error.value =
@@ -356,8 +360,12 @@ onMounted(load);
             <span>Portas</span
             ><strong>{{ validation.summary.ports.length }}</strong>
           </div>
+          <div>
+            <span>Variáveis</span
+            ><strong>{{ detectedVariables.length }} detectadas</strong>
+          </div>
         </div>
-        <p v-else class="muted">
+          <p v-else class="muted">
           Valide a origem para exibir serviços, imagens, portas, volumes e redes
           detectados.
         </p>
@@ -466,7 +474,7 @@ onMounted(load);
           Salvar variáveis
         </button>
       </div>
-      <EnvironmentVariablesEditor v-model="variables" />
+      <EnvironmentVariablesEditor v-model="variables" :detected="detectedVariables" />
     </section>
     <section v-else class="activity-list">
       <article

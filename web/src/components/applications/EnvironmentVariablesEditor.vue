@@ -6,7 +6,8 @@ type Variable = {
   secret: boolean;
   has_value?: boolean;
 };
-const props = defineProps<{ modelValue: Variable[] }>();
+type DetectedVariable = { name: string; default_value?: string; required?: boolean; secret?: boolean; services?: string[] };
+const props = defineProps<{ modelValue: Variable[]; detected?: DetectedVariable[] }>();
 const emit = defineEmits<{ "update:modelValue": [value: Variable[]] }>();
 const draft = ref<Variable>({ key: "", value: "", secret: false });
 function add() {
@@ -23,9 +24,16 @@ function remove(index: number) {
     props.modelValue.filter((_, itemIndex) => itemIndex !== index),
   );
 }
+function valueFor(item: DetectedVariable) { return props.modelValue.find((variable) => variable.key === item.name); }
 </script>
 <template>
   <div class="environment-editor">
+    <details v-if="detected?.length" class="detected-variables" open>
+      <summary>Variáveis detectadas · {{ detected.length }}</summary>
+      <div v-for="item in detected" :key="item.name" class="variable-row">
+        <strong>{{ item.name }}</strong><span>{{ item.services?.join(", ") || "Compose" }}</span><span>{{ item.secret ? "•••••••• · secret" : valueFor(item)?.value || (item.default_value ? `Padrão: ${item.default_value}` : item.required ? "Valor obrigatório ausente" : "Opcional") }}</span>
+      </div>
+    </details>
     <h3>Variáveis de ambiente</h3>
     <div class="variable-row new-variable">
       <input

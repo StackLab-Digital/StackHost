@@ -130,7 +130,7 @@ func validateSource(sourceType string, input sourceInput) sourceResult {
 }
 
 func sourceSummary(input sourceInput, result sourceResult) map[string]any {
-	summary := map[string]any{"services": result.Summary.Services, "images": result.Summary.Images, "ports": result.Summary.Ports, "volumes": result.Summary.Volumes, "networks": result.Summary.Networks}
+	summary := map[string]any{"services": result.Summary.Services, "images": result.Summary.Images, "ports": result.Summary.Ports, "volumes": result.Summary.Volumes, "networks": result.Summary.Networks, "environment_variables": result.Summary.EnvironmentVariables}
 	if input.Image != "" {
 		summary["image"] = input.Image
 	}
