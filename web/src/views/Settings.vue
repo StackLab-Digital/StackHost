@@ -10,12 +10,24 @@ const toast = useToast();
 const infra = ref<any>({});
 const loading = ref(true);
 const signingOut = ref(false);
+const runtimeMode = ref<"standalone" | "swarm">("standalone");
+const runtimeSaving = ref(false);
 async function load() {
   try {
     infra.value = await api("/api/v1/infrastructure");
+    const settings = await api<{ runtime_mode: "standalone" | "swarm" }>("/api/v1/settings/environment");
+    runtimeMode.value = settings.runtime_mode;
   } finally {
     loading.value = false;
   }
+}
+async function saveRuntimeMode() {
+  runtimeSaving.value = true;
+  try {
+    await api("/api/v1/settings/environment", { method: "PATCH", body: JSON.stringify({ runtime_mode: runtimeMode.value }) });
+    toast.success("Modo de execução salvo.");
+  } catch (err) { toast.error(err instanceof Error ? err.message : "Não foi possível salvar o modo de execução."); }
+  finally { runtimeSaving.value = false; }
 }
 async function logout() {
   signingOut.value = true;
@@ -63,6 +75,13 @@ onMounted(load);
           <dd>Conta local</dd>
         </div>
       </dl>
+    </section>
+    <section class="panel panel-section runtime-settings">
+      <p class="kicker">MODO DE EXECUÇÃO</p>
+      <h2>Como as aplicações serão executadas</h2>
+      <label><input v-model="runtimeMode" type="radio" value="standalone" /> <strong>Docker em servidor único</strong><small>Mais simples · Executa aplicações com Docker Compose neste servidor.</small></label>
+      <label><input v-model="runtimeMode" type="radio" value="swarm" /> <strong>Docker Swarm</strong><small>Alta disponibilidade · Permite múltiplos servidores, réplicas e rolling updates.</small></label>
+      <button class="primary" type="button" :disabled="runtimeSaving" @click="saveRuntimeMode">{{ runtimeSaving ? "Salvando…" : "Salvar modo" }}</button>
     </section>
     <section class="panel panel-section">
       <p class="kicker">AMBIENTE</p>

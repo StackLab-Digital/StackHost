@@ -119,6 +119,8 @@ func migrate(db *sql.DB) error {
 	var version2 int
 	_ = db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=2").Scan(&version2)
 	if version2 > 0 {
+		_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS environment_settings(id INTEGER PRIMARY KEY, runtime_mode TEXT NOT NULL DEFAULT 'standalone', updated_at TEXT NOT NULL)`)
+		_, _ = db.Exec(`INSERT INTO environment_settings(id,runtime_mode,updated_at) SELECT 1,'standalone',? WHERE NOT EXISTS (SELECT 1 FROM environment_settings WHERE id=1)`, time.Now().UTC().Format(time.RFC3339))
 		return nil
 	}
 	tx, err := db.Begin()
@@ -134,7 +136,13 @@ func migrate(db *sql.DB) error {
 	if _, err = tx.Exec(`UPDATE applications SET configuration_status='draft' WHERE status='unknown'; CREATE TABLE IF NOT EXISTS application_sources(id INTEGER PRIMARY KEY, application_id INTEGER NOT NULL UNIQUE REFERENCES applications(id) ON DELETE CASCADE, source_type TEXT NOT NULL, encrypted_payload BLOB NOT NULL, encryption_nonce BLOB NOT NULL, payload_version INTEGER NOT NULL DEFAULT 1, checksum TEXT NOT NULL, validation_status TEXT NOT NULL DEFAULT 'draft', validation_errors TEXT NOT NULL DEFAULT '[]', validation_warnings TEXT NOT NULL DEFAULT '[]', summary_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_application_sources_application ON application_sources(application_id); INSERT INTO schema_migrations(version,applied_at) VALUES(2,?)`, time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS environment_settings(id INTEGER PRIMARY KEY, runtime_mode TEXT NOT NULL DEFAULT 'standalone', updated_at TEXT NOT NULL); INSERT OR IGNORE INTO environment_settings(id,runtime_mode,updated_at) VALUES(1,'standalone',?)`, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	return nil
 }
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
@@ -161,6 +169,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("/api/v1/infrastructure/volumes", a.auth(a.infrastructureVolumes))
 	mux.HandleFunc("/api/v1/infrastructure/networks", a.auth(a.infrastructureNetworks))
 	mux.HandleFunc("/api/v1/infrastructure/swarm/init", a.auth(a.infrastructureSwarmInit))
+	mux.HandleFunc("/api/v1/settings/environment", a.auth(a.environmentSettings))
 	mux.HandleFunc("/api/v1/activity", a.auth(a.activity))
 	mux.HandleFunc("/api/v1/events", a.auth(a.eventsStream))
 	mux.HandleFunc("/", a.spa)
@@ -707,6 +716,47 @@ func (a *app) infrastructure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"available": false, "message": "Docker não está conectado.", "swarm": map[string]any{"active": false, "message": "O host não está conectado a um Swarm."}, "nodes": []any{}, "services": []any{}})
+}
+
+func (a *app) environmentSettings(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(userKey{}).(int64)
+	var role string
+	if a.db.QueryRow("SELECT role FROM users WHERE id=?", userID).Scan(&role) != nil || role != "admin" {
+		jsonError(w, http.StatusForbidden, "forbidden", "Apenas administradores podem alterar o modo de execução.")
+		return
+	}
+	if r.Method == http.MethodPatch {
+		var input struct {
+			RuntimeMode string `json:"runtime_mode"`
+		}
+		if json.NewDecoder(r.Body).Decode(&input) != nil || (input.RuntimeMode != "standalone" && input.RuntimeMode != "swarm") {
+			jsonValidation(w, map[string]string{"runtime_mode": "Escolha standalone ou swarm."})
+			return
+		}
+		_, err := a.db.Exec("UPDATE environment_settings SET runtime_mode=?,updated_at=? WHERE id=1", input.RuntimeMode, time.Now().UTC().Format(time.RFC3339))
+		if err != nil {
+			jsonError(w, 500, "internal_error", "Não foi possível salvar o modo de execução.")
+			return
+		}
+		a.audit(userID, "environment.runtime_mode_updated", "environment", 1)
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodPatch {
+		jsonError(w, 405, "method_not_allowed", "Método não permitido.")
+		return
+	}
+	var mode string
+	if a.db.QueryRow("SELECT runtime_mode FROM environment_settings WHERE id=1").Scan(&mode) != nil {
+		mode = "standalone"
+	}
+	result := map[string]any{"runtime_mode": mode, "docker_available": false, "swarm_active": false, "swarm_manager": false, "standalone_available": false}
+	if a.docker != nil {
+		snapshot := a.docker.Snapshot(r.Context())
+		result["docker_available"] = snapshot.Available
+		result["standalone_available"] = snapshot.Available
+		result["swarm_active"] = snapshot.Swarm.Active
+		result["swarm_manager"] = snapshot.Swarm.ControlAvailable
+	}
+	json.NewEncoder(w).Encode(result)
 }
 func (a *app) infrastructureNodes(w http.ResponseWriter, r *http.Request) {
 	if a.docker == nil {
