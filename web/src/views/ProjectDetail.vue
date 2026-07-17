@@ -240,6 +240,9 @@ async function createApp(saveAsDraft = false) {
     saving.value = false;
   }
 }
+async function submitCreate() {
+  await createApp(false);
+}
 async function saveApp() {
   saving.value = true;
   try {
@@ -426,7 +429,7 @@ onMounted(load);
     description="Defina a origem e revise a configuração antes de criar."
     @close="closeWizard"
   >
-    <form v-if="!editApp.id" id="new-app-form" @submit.prevent="createApp">
+    <form v-if="!editApp.id" id="new-app-form" @submit.prevent="submitCreate">
       <nav class="wizard-stepper" aria-label="Progresso da criação">
         <span
           v-for="(label, index) in [
