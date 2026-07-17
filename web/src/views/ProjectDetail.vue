@@ -522,7 +522,10 @@ onMounted(load);
         <div v-if="newApp.source_type === 'compose'">
           <h3>Docker Compose</h3>
           <div class="compose-config-grid">
-            <ComposeCodeEditor v-model="newSource.compose_yaml" />
+            <ComposeCodeEditor
+              v-model="newSource.compose_yaml"
+              @error="toast.error"
+            />
             <aside class="source-summary">
               <h3>Resumo detectado</h3>
               <p v-if="!newSource.compose_yaml" class="muted">

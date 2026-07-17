@@ -408,7 +408,11 @@ onMounted(load);
       </div>
       <div v-if="sourceType === 'compose'">
         <label>Docker Compose</label>
-        <ComposeCodeEditor v-model="composeYaml" @validate="validateSource" />
+        <ComposeCodeEditor
+          v-model="composeYaml"
+          @validate="validateSource"
+          @error="toast.error"
+        />
       </div>
       <div v-else-if="sourceType === 'image'" class="form-grid">
         <label

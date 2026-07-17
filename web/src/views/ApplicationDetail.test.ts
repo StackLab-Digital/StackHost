@@ -38,7 +38,12 @@ describe("ApplicationDetail", () => {
     });
     await router.push("/projects/2/applications/1?tab=source");
     await router.isReady();
-    const wrapper = mount(ApplicationDetail, { global: { plugins: [router] } });
+    const wrapper = mount(ApplicationDetail, {
+      global: {
+        plugins: [router],
+        stubs: { ComposeCodeEditor: { template: "<div />" } },
+      },
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(wrapper.text()).toContain("Frontend");
     expect(wrapper.text()).toContain("Docker Compose");
