@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -261,16 +262,14 @@ func (a *app) createSession(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	token := hex.EncodeToString(seed)
-	hash := sha256.Sum256([]byte(token))
-	tokenHash := hex.EncodeToString(hash[:])
+	tokenHash := a.sessionHash(token)
 	now := time.Now().UTC()
 	a.db.Exec("INSERT INTO sessions(id,user_id,token_hash,expires_at,created_at,last_seen_at,user_agent,ip_address) VALUES(?,?,?,?,?,?,?,?)", token, id, tokenHash, now.Add(24*time.Hour).Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339), r.UserAgent(), r.RemoteAddr)
 	http.SetCookie(w, &http.Cookie{Name: "stackhost_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: os.Getenv("STACKHOST_COOKIE_SECURE") == "true", MaxAge: 86400})
 }
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie("stackhost_session"); err == nil {
-		hash := sha256.Sum256([]byte(c.Value))
-		tokenHash := hex.EncodeToString(hash[:])
+		tokenHash := a.sessionHash(c.Value)
 		var userID int64
 		_ = a.db.QueryRow("SELECT user_id FROM sessions WHERE token_hash=?", tokenHash).Scan(&userID)
 		a.db.Exec("UPDATE sessions SET revoked_at=? WHERE token_hash=?", time.Now().UTC().Format(time.RFC3339), tokenHash)
@@ -288,10 +287,10 @@ func (a *app) auth(next http.HandlerFunc) http.HandlerFunc {
 			jsonError(w, 401, "unauthorized", "Faça login para continuar.")
 			return
 		}
-		hash := sha256.Sum256([]byte(c.Value))
+		tokenHash := a.sessionHash(c.Value)
 		var id int64
 		var exp string
-		err = a.db.QueryRow("SELECT user_id,expires_at FROM sessions WHERE token_hash=? AND revoked_at IS NULL", hex.EncodeToString(hash[:])).Scan(&id, &exp)
+		err = a.db.QueryRow("SELECT user_id,expires_at FROM sessions WHERE token_hash=? AND revoked_at IS NULL", tokenHash).Scan(&id, &exp)
 		if err != nil {
 			jsonError(w, 401, "unauthorized", "Faça login para continuar.")
 			return
@@ -301,10 +300,16 @@ func (a *app) auth(next http.HandlerFunc) http.HandlerFunc {
 			jsonError(w, 401, "unauthorized", "Sessão expirada.")
 			return
 		}
-		_, _ = a.db.Exec("UPDATE sessions SET last_seen_at=? WHERE token_hash=?", time.Now().UTC().Format(time.RFC3339), hex.EncodeToString(hash[:]))
+		_, _ = a.db.Exec("UPDATE sessions SET last_seen_at=? WHERE token_hash=?", time.Now().UTC().Format(time.RFC3339), tokenHash)
 		r = r.WithContext(context.WithValue(r.Context(), userKey{}, id))
 		next(w, r)
 	}
+}
+
+func (a *app) sessionHash(token string) string {
+	mac := hmac.New(sha256.New, []byte(a.sessionSecret))
+	_, _ = mac.Write([]byte(token))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 type userKey struct{}
