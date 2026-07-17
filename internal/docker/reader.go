@@ -12,13 +12,16 @@ import (
 
 type Reader struct{ client *client.Client }
 type Snapshot struct {
-	Available     bool   `json:"available"`
-	Message       string `json:"message,omitempty"`
-	EngineVersion string `json:"engine_version,omitempty"`
-	Containers    int    `json:"containers"`
-	Running       int    `json:"running"`
-	Images        int    `json:"images"`
-	Swarm         Swarm  `json:"swarm"`
+	Available       bool   `json:"available"`
+	Message         string `json:"message,omitempty"`
+	EngineVersion   string `json:"engine_version,omitempty"`
+	Containers      int    `json:"containers"`
+	Running         int    `json:"running"`
+	Images          int    `json:"images"`
+	OperatingSystem string `json:"operating_system,omitempty"`
+	CPUs            int    `json:"cpus,omitempty"`
+	MemoryBytes     int64  `json:"memory_bytes,omitempty"`
+	Swarm           Swarm  `json:"swarm"`
 }
 type Swarm struct {
 	Active       bool   `json:"active"`
@@ -78,6 +81,9 @@ func (r *Reader) Snapshot(ctx context.Context) Snapshot {
 		out.Containers = info.Containers
 		out.Running = info.ContainersRunning
 		out.Images = info.Images
+		out.OperatingSystem = info.OperatingSystem
+		out.CPUs = info.NCPU
+		out.MemoryBytes = info.MemTotal
 	}
 	swarm, err := r.client.SwarmInspect(ctx)
 	if err != nil {
