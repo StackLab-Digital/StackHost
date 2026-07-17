@@ -45,7 +45,13 @@ func main() {
 	dataDir := getenv("STACKHOST_DATA_DIR", "./data")
 	appEnv := getenv("STACKHOST_APP_ENV", "development")
 	sessionSecret := getenv("STACKHOST_SESSION_SECRET", "development-only-change-me")
-	encryptionKey := getenv("STACKHOST_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	encryptionKey, encryptionKeySet := os.LookupEnv("STACKHOST_ENCRYPTION_KEY")
+	if !encryptionKeySet {
+		if appEnv == "production" {
+			panic("STACKHOST_ENCRYPTION_KEY is required in production")
+		}
+		encryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	}
 	if appEnv == "production" && (sessionSecret == "development-only-change-me" || len(sessionSecret) < 32) {
 		panic("STACKHOST_SESSION_SECRET must be a strong value in production")
 	}

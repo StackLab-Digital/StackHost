@@ -102,6 +102,10 @@ async function load() {
     loading.value = false;
   }
 }
+async function readComposeFile(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (file) composeYaml.value = await file.text();
+}
 async function loadSource() {
   source.value = await api<SourceData>(
     `/api/v1/applications/${route.params.applicationId}/source`,
@@ -408,6 +412,11 @@ onMounted(load);
             class="code-editor"
             spellcheck="false"
             placeholder="services:\n  web:\n    image: nginx:1.27-alpine"
+          />
+          <input
+            type="file"
+            accept=".yml,.yaml,text/yaml"
+            @change="readComposeFile"
           />
         </label>
       </div>

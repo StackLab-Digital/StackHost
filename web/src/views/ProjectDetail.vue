@@ -111,6 +111,10 @@ function nextAppStep() {
   if (appStep.value === 2 && !newApp.value.source_type) return;
   appStep.value += 1;
 }
+async function readComposeFile(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (file) newSource.value.compose_yaml = await file.text();
+}
 async function saveProject() {
   saving.value = true;
   try {
@@ -369,6 +373,11 @@ onMounted(load);
             class="code-editor"
             spellcheck="false"
             placeholder="services:\n  web:\n    image: nginx:1.27-alpine"
+          />
+          <input
+            type="file"
+            accept=".yml,.yaml,text/yaml"
+            @change="readComposeFile"
           />
         </label>
         <div v-else-if="newApp.source_type === 'image'" class="form-grid">
