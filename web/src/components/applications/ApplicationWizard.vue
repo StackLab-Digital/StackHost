@@ -32,7 +32,7 @@ const emit = defineEmits<{
     <div class="application-wizard-nav">
       <WizardStepper :step="step" />
     </div>
-    <section class="application-wizard-body">
+    <section class="application-wizard-body" :class="{ 'application-wizard-body--compose': step === 3 && sourceType === 'compose' }">
       <slot />
     </section>
     <footer class="application-wizard-foot">
