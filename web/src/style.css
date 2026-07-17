@@ -464,13 +464,14 @@ h2 {
 }
 .application-wizard-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .application-wizard-head { min-height: 108px; padding-top: 24px; padding-bottom: 18px; }
+.application-wizard-head { border-bottom: 0; }
 .application-wizard-head h1 { margin: 2px 0 4px; }
 .application-wizard-head .muted { margin: 0; }
 .application-wizard-nav { min-height: 68px; padding-top: 14px; padding-bottom: 12px; }
 .application-wizard-nav .wizard-stepper { margin: 0; }
 .application-wizard-body { flex: 1; min-height: 0; overflow: hidden; padding: 24px 32px; }
 .wizard-step-content { width: 100%; height: 100%; min-height: 0; overflow: auto; max-width: 1280px; margin: 0 auto; }
-.application-wizard-foot { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #292d35; border-bottom: 0; }
+.application-wizard-foot { display: flex; align-items: center; justify-content: space-between; border-top: 0; border-bottom: 0; }
 .wizard-foot-actions { display: flex; gap: 10px; }
 .compose-page-grid { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 7fr) minmax(220px, 3fr); gap: 16px; }
 .compose-page-summary { min-height: 0; overflow: auto; }
