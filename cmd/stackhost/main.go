@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -28,6 +29,12 @@ type app struct {
 	sessionSecret string
 	events        chan map[string]any
 	docker        *dockerreader.Reader
+	loginMu       sync.Mutex
+	loginAttempts map[string]attempt
+}
+type attempt struct {
+	count int
+	since time.Time
 }
 
 func main() {
@@ -45,7 +52,7 @@ func main() {
 		panic(err)
 	}
 	dr, _ := dockerreader.NewReader()
-	a := &app{db: db, sessionSecret: getenv("STACKHOST_SESSION_SECRET", "development-only-change-me"), events: make(chan map[string]any, 32), docker: dr}
+	a := &app{db: db, sessionSecret: getenv("STACKHOST_SESSION_SECRET", "development-only-change-me"), events: make(chan map[string]any, 32), docker: dr, loginAttempts: make(map[string]attempt)}
 	s := &http.Server{Addr: addr, Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -99,6 +106,17 @@ func security(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("X-XSS-Protection", "0")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		if origin := os.Getenv("STACKHOST_ALLOWED_ORIGIN"); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -157,6 +175,10 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, 422, "validation_failed", "Revise os campos informados.")
 		return
 	}
+	if !a.loginAllowed(r) {
+		jsonError(w, 429, "too_many_attempts", "Tente novamente em alguns instantes.")
+		return
+	}
 	var id int64
 	var hash string
 	err := a.db.QueryRow("SELECT id,password_hash FROM users WHERE email=?", strings.ToLower(strings.TrimSpace(in.Email))).Scan(&id, &hash)
@@ -168,6 +190,19 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	a.audit(id, "login", "user", id)
 	a.createSession(w, r, id)
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+func (a *app) loginAllowed(r *http.Request) bool {
+	ip := strings.Split(r.RemoteAddr, ":")[0]
+	now := time.Now()
+	a.loginMu.Lock()
+	defer a.loginMu.Unlock()
+	v := a.loginAttempts[ip]
+	if now.Sub(v.since) > time.Minute {
+		v = attempt{since: now}
+	}
+	v.count++
+	a.loginAttempts[ip] = v
+	return v.count <= 10
 }
 func (a *app) createSession(w http.ResponseWriter, r *http.Request, id int64) {
 	seed := make([]byte, 32)
