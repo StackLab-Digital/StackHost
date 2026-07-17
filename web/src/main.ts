@@ -11,36 +11,47 @@ const router = createRouter({
     {
       path: "/",
       component: () => import("./views/Dashboard.vue"),
-      meta: { auth: true },
+      meta: { auth: true, title: "Visão geral" },
     },
-    { path: "/login", component: () => import("./views/Login.vue") },
-    { path: "/setup", component: () => import("./views/Setup.vue") },
+    {
+      path: "/login",
+      component: () => import("./views/Login.vue"),
+      meta: { title: "Entrar" },
+    },
+    {
+      path: "/setup",
+      component: () => import("./views/Setup.vue"),
+      meta: { title: "Configuração" },
+    },
     {
       path: "/projects",
       component: () => import("./views/Projects.vue"),
-      meta: { auth: true },
+      meta: { auth: true, title: "Projetos" },
     },
     {
       path: "/projects/:id",
       component: () => import("./views/ProjectDetail.vue"),
-      meta: { auth: true },
+      meta: { auth: true, title: "Projeto" },
     },
     {
       path: "/infrastructure",
       component: () => import("./views/Infrastructure.vue"),
-      meta: { auth: true },
+      meta: { auth: true, title: "Infraestrutura" },
     },
     {
       path: "/settings",
       component: () => import("./views/Settings.vue"),
-      meta: { auth: true },
+      meta: { auth: true, title: "Configurações" },
     },
   ],
 });
 router.addRoute({
   path: "/activity",
   component: () => import("./views/Activity.vue"),
-  meta: { auth: true },
+  meta: { auth: true, title: "Atividade" },
+});
+router.afterEach((to) => {
+  document.title = `${to.meta.title || "Painel"} · StackHost`;
 });
 const pinia = createPinia();
 const auth = useAuthStore(pinia);
