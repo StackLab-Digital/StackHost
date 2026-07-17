@@ -1,0 +1,1 @@
+<template><div class="hero"><div><p class="kicker">WORKSPACES</p><h1>Projects</h1><p class="muted">Keep applications grouped by purpose.</p></div><button class="primary">+ New project</button></div><div class="empty"><h2>No projects yet</h2><p>Your first project will appear here.</p><button class="secondary">Create project</button></div></template>

@@ -1,0 +1,3 @@
+import { createApp } from 'vue'; import { createPinia } from 'pinia'; import { createRouter,createWebHistory } from 'vue-router'; import App from './App.vue'; import './style.css';
+const router=createRouter({history:createWebHistory(),routes:[{path:'/',component:()=>import('./views/Dashboard.vue')},{path:'/login',component:()=>import('./views/Login.vue')},{path:'/setup',component:()=>import('./views/Setup.vue')},{path:'/projects',component:()=>import('./views/Projects.vue')},{path:'/infrastructure',component:()=>import('./views/Infrastructure.vue')} ]});
+createApp(App).use(createPinia()).use(router).mount('#app');

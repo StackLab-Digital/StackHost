@@ -1,0 +1,18 @@
+version: "3.9"
+services:
+  stackhost:
+    image: stackhost:local
+    ports: ["8080:8080"]
+    volumes:
+      - stackhost_data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      STACKHOST_DATA_DIR: /app/data
+      STACKHOST_COOKIE_SECURE: "true"
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+      restart_policy:
+        condition: on-failure
+volumes:
+  stackhost_data:
