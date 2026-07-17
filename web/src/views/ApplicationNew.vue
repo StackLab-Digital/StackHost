@@ -15,6 +15,7 @@ const step = ref(1);
 const saving = ref(false);
 const validating = ref(false);
 const discardOpen = ref(false);
+const allowNavigation = ref(false);
 const fieldErrors = ref<Record<string, string>>({});
 type SourceValidation = { valid: boolean; errors: string[]; warnings: string[]; summary?: { services?: string[]; images?: string[]; ports?: string[]; volumes?: string[]; networks?: string[]; secrets?: string[]; configs?: string[] } };
 const validation = ref<SourceValidation | null>(null);
@@ -64,6 +65,7 @@ async function create(save_as_draft = false) {
   try {
     const result = await api<{ id: number }>(`/api/v1/projects/${route.params.projectId}/applications`, { method: "POST", body: JSON.stringify({ ...newApp.value, source: source.value, save_as_draft }) });
     toast.success("Aplicação adicionada.");
+    allowNavigation.value = true;
     router.push(`/projects/${route.params.projectId}/applications/${result.id}?tab=source`);
   } catch (error) {
     if (error instanceof RequestError) fieldErrors.value = error.fields || {};
@@ -72,6 +74,10 @@ async function create(save_as_draft = false) {
 }
 onMounted(() => { document.title = "Nova aplicação · StackHost"; });
 onBeforeRouteLeave((_to, _from, next) => {
+  if (allowNavigation.value) {
+    next();
+    return;
+  }
   if (dirty.value && !discardOpen.value) {
     discardOpen.value = true;
     next(false);
