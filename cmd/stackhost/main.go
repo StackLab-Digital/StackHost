@@ -120,6 +120,11 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("/api/v1/infrastructure", a.auth(a.infrastructure))
 	mux.HandleFunc("/api/v1/infrastructure/nodes", a.auth(a.infrastructureNodes))
 	mux.HandleFunc("/api/v1/infrastructure/services", a.auth(a.infrastructureServices))
+	mux.HandleFunc("/api/v1/infrastructure/containers", a.auth(a.infrastructureContainers))
+	mux.HandleFunc("/api/v1/infrastructure/images", a.auth(a.infrastructureImages))
+	mux.HandleFunc("/api/v1/infrastructure/volumes", a.auth(a.infrastructureVolumes))
+	mux.HandleFunc("/api/v1/infrastructure/networks", a.auth(a.infrastructureNetworks))
+	mux.HandleFunc("/api/v1/infrastructure/swarm/init", a.auth(a.infrastructureSwarmInit))
 	mux.HandleFunc("/api/v1/activity", a.auth(a.activity))
 	mux.HandleFunc("/api/v1/events", a.auth(a.eventsStream))
 	mux.HandleFunc("/", a.spa)
@@ -336,17 +341,31 @@ func (a *app) dashboard(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var action, resource, created string
 			rows.Scan(&action, &resource, &created)
-			recent = append(recent, map[string]string{"action": action, "resource_type": resource, "created_at": created})
+			recent = append(recent, map[string]string{"action": action, "resource_type": resource, "created_at": created, "description": activityDescription(action)})
 		}
 	}
-	json.NewEncoder(w).Encode(map[string]any{"projects": projects, "applications": apps, "infrastructure": infra, "activity": recent})
+	recentProjects := []any{}
+	if rows, err := a.db.Query("SELECT id,name,(SELECT count(*) FROM applications a WHERE a.project_id=projects.id),updated_at FROM projects ORDER BY updated_at DESC LIMIT 4"); err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id, count int
+			var name, updated string
+			_ = rows.Scan(&id, &name, &count, &updated)
+			recentProjects = append(recentProjects, map[string]any{"id": id, "name": name, "applications_count": count, "updated_at": updated})
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]any{"projects": projects, "applications": apps, "infrastructure": infra, "activity": recent, "recent_projects": recentProjects})
+}
+func activityDescription(action string) string {
+	descriptions := map[string]string{"login": "Entrou no painel", "logout": "Saiu do painel", "onboarding": "Criou o administrador inicial", "project.created": "Criou um projeto", "project.updated": "Atualizou um projeto", "application.created": "Adicionou uma aplicação", "application.updated": "Atualizou uma aplicação", "swarm.initialized": "Preparou o ambiente Docker"}
+	return descriptions[action]
 }
 func (a *app) audit(userID int64, action, resource string, resourceID any) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	a.db.Exec("INSERT INTO audit_logs(user_id,action,resource_type,resource_id,created_at) VALUES(?,?,?,?,?)", userID, action, resource, fmt.Sprint(resourceID), now)
 }
 func (a *app) activity(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.db.Query("SELECT id,action,coalesce(resource_type,''),coalesce(resource_id,''),created_at FROM audit_logs ORDER BY id DESC LIMIT 50")
+	rows, err := a.db.Query("SELECT audit_logs.id,audit_logs.action,coalesce(audit_logs.resource_type,''),coalesce(audit_logs.resource_id,''),audit_logs.created_at,coalesce(users.name,'Administrador') FROM audit_logs LEFT JOIN users ON users.id=audit_logs.user_id ORDER BY audit_logs.id DESC LIMIT 50")
 	if err != nil {
 		jsonError(w, 500, "internal_error", "Não foi possível carregar a atividade.")
 		return
@@ -355,23 +374,24 @@ func (a *app) activity(w http.ResponseWriter, r *http.Request) {
 	out := []any{}
 	for rows.Next() {
 		var id int
-		var action, resource, resourceID, created string
-		rows.Scan(&id, &action, &resource, &resourceID, &created)
-		out = append(out, map[string]any{"id": id, "action": action, "resource_type": resource, "resource_id": resourceID, "created_at": created})
+		var action, resource, resourceID, created, actor string
+		rows.Scan(&id, &action, &resource, &resourceID, &created, &actor)
+		out = append(out, map[string]any{"id": id, "action": action, "description": activityDescription(action), "resource_type": resource, "resource_id": resourceID, "actor_name": actor, "created_at": created})
 	}
 	json.NewEncoder(w).Encode(out)
 }
 func (a *app) projects(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method == "GET" {
-		rows, _ := a.db.Query("SELECT id,name,slug,coalesce(description,''),status,created_at,updated_at FROM projects ORDER BY id DESC")
+		rows, _ := a.db.Query("SELECT id,name,slug,coalesce(description,''),status,created_at,updated_at,(SELECT count(*) FROM applications a WHERE a.project_id=projects.id) FROM projects ORDER BY id DESC")
 		defer rows.Close()
 		out := []any{}
 		for rows.Next() {
 			var id int
 			var name, slug, desc, status, created, updated string
-			rows.Scan(&id, &name, &slug, &desc, &status, &created, &updated)
-			out = append(out, map[string]any{"id": id, "name": name, "slug": slug, "description": desc, "status": status, "created_at": created, "updated_at": updated})
+			var applicationsCount int
+			rows.Scan(&id, &name, &slug, &desc, &status, &created, &updated, &applicationsCount)
+			out = append(out, map[string]any{"id": id, "name": name, "slug": slug, "description": desc, "status": status, "applications_count": applicationsCount, "created_at": created, "updated_at": updated})
 		}
 		json.NewEncoder(w).Encode(out)
 		return
@@ -477,7 +497,12 @@ func (a *app) applications(w http.ResponseWriter, r *http.Request, projectID int
 		jsonError(w, 405, "method_not_allowed", "Método não permitido.")
 		return
 	}
-	var in struct{ Name, Slug, SourceType, DockerStackName string }
+	var in struct {
+		Name            string `json:"name"`
+		Slug            string `json:"slug"`
+		SourceType      string `json:"source_type"`
+		DockerStackName string `json:"docker_stack_name"`
+	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		jsonValidation(w, map[string]string{"form": "JSON inválido."})
 		return
@@ -536,7 +561,11 @@ func (a *app) applicationRoute(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, 405, "method_not_allowed", "Método não permitido.")
 		return
 	}
-	var in struct{ Name, Status, DockerStackName string }
+	var in struct {
+		Name            string `json:"name"`
+		Status          string `json:"status"`
+		DockerStackName string `json:"docker_stack_name"`
+	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		jsonError(w, 422, "validation_failed", "Revise os campos informados.")
 		return
@@ -622,6 +651,103 @@ func (a *app) infrastructureServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(services)
+}
+func inventoryLimit(r *http.Request) int {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		return 50
+	}
+	if limit > 200 {
+		return 200
+	}
+	return limit
+}
+func (a *app) infrastructureContainers(w http.ResponseWriter, r *http.Request) {
+	if a.docker == nil {
+		jsonError(w, 503, "docker_unavailable", "Docker não está conectado.")
+		return
+	}
+	items, err := a.docker.Containers(r.Context(), inventoryLimit(r), r.URL.Query().Get("state"))
+	if err != nil {
+		jsonError(w, 503, "docker_unavailable", "Não foi possível consultar os containers.")
+		return
+	}
+	json.NewEncoder(w).Encode(items)
+}
+func (a *app) infrastructureImages(w http.ResponseWriter, r *http.Request) {
+	if a.docker == nil {
+		jsonError(w, 503, "docker_unavailable", "Docker não está conectado.")
+		return
+	}
+	items, err := a.docker.Images(r.Context(), inventoryLimit(r))
+	if err != nil {
+		jsonError(w, 503, "docker_unavailable", "Não foi possível consultar as imagens.")
+		return
+	}
+	json.NewEncoder(w).Encode(items)
+}
+func (a *app) infrastructureVolumes(w http.ResponseWriter, r *http.Request) {
+	if a.docker == nil {
+		jsonError(w, 503, "docker_unavailable", "Docker não está conectado.")
+		return
+	}
+	items, err := a.docker.Volumes(r.Context(), inventoryLimit(r))
+	if err != nil {
+		jsonError(w, 503, "docker_unavailable", "Não foi possível consultar os volumes.")
+		return
+	}
+	json.NewEncoder(w).Encode(items)
+}
+func (a *app) infrastructureNetworks(w http.ResponseWriter, r *http.Request) {
+	if a.docker == nil {
+		jsonError(w, 503, "docker_unavailable", "Docker não está conectado.")
+		return
+	}
+	items, err := a.docker.Networks(r.Context(), inventoryLimit(r))
+	if err != nil {
+		jsonError(w, 503, "docker_unavailable", "Não foi possível consultar as redes.")
+		return
+	}
+	json.NewEncoder(w).Encode(items)
+}
+func (a *app) infrastructureSwarmInit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, 405, "method_not_allowed", "Método não permitido.")
+		return
+	}
+	userID, _ := r.Context().Value(userKey{}).(int64)
+	var role string
+	if a.db.QueryRow("SELECT role FROM users WHERE id=?", userID).Scan(&role) != nil || role != "admin" {
+		jsonError(w, 403, "permission_denied", "Somente administradores podem preparar o ambiente.")
+		return
+	}
+	if a.docker == nil {
+		jsonError(w, 503, "docker_unavailable", "Docker não está conectado.")
+		return
+	}
+	current := a.docker.Snapshot(r.Context())
+	if current.Swarm.Active {
+		json.NewEncoder(w).Encode(map[string]any{"status": "active", "node_role": "manager", "message": "O ambiente já está preparado."})
+		return
+	}
+	var input struct {
+		AdvertiseAddress string `json:"advertise_address"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&input)
+	}
+	clusterID, err := a.docker.InitSwarm(r.Context(), strings.TrimSpace(input.AdvertiseAddress))
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "advertise") || strings.Contains(strings.ToLower(err.Error()), "address") {
+			jsonError(w, http.StatusUnprocessableEntity, "advertise_address_required", "O Docker precisa de um endereço de anúncio. Abra as opções avançadas e informe o endereço desta máquina.")
+			return
+		}
+		jsonError(w, 422, "swarm_init_failed", "Não foi possível preparar o ambiente Docker. Verifique a rede do servidor e tente novamente.")
+		return
+	}
+	a.audit(userID, "swarm.initialized", "infrastructure", clusterID)
+	a.publish("swarm.initialized", map[string]any{"status": "active"})
+	json.NewEncoder(w).Encode(map[string]any{"status": "active", "cluster_id": clusterID, "node_role": "manager", "message": "Ambiente preparado com sucesso."})
 }
 func (a *app) spa(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {

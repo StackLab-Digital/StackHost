@@ -1,6 +1,6 @@
 # StackHost
 
-StackHost is an early-stage, self-hosted control panel for Docker and Docker Swarm. It provides first-admin onboarding, cookie sessions, SQLite persistence, projects, and an infrastructure-aware dashboard.
+StackHost is an early-stage, self-hosted control panel for Docker and Docker Swarm. It provides first-admin onboarding, cookie sessions, SQLite persistence, projects, applications, Docker inventory, and an infrastructure-aware dashboard in Portuguese (Brasil).
 
 ## Local development
 
@@ -15,6 +15,10 @@ make dev
 Open http://localhost:8080. A clean database redirects users to `/setup` in the frontend flow. Run `make test`, `make lint`, and `make build` for checks.
 
 For frontend hot reload during development, run `cd web && npm run dev` in a second terminal. The Vite server proxies the UI only; the Go server remains responsible for the API.
+
+When Docker is connected without Swarm, open **Infraestrutura** and use **Preparar ambiente**. The operation uses the Docker Engine SDK, requires an administrator session, records an audit event, and never removes existing containers, images, or volumes. Docker socket access is intentionally explicit because it grants elevated access to the host.
+
+The initial read-only inventory APIs are `/api/v1/infrastructure/containers`, `/images`, `/volumes`, and `/networks`; each accepts `limit` and returns bounded DTOs.
 
 ## Docker
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -176,5 +177,31 @@ func TestCleanDatabaseIntegrationFlow(t *testing.T) {
 	}
 	if payload.Projects != 1 || payload.Applications != 1 || len(payload.Activity) == 0 {
 		t.Fatalf("dashboard payload = %#v", payload)
+	}
+}
+
+func TestInfrastructureInitRequiresAdmin(t *testing.T) {
+	a := testApp(t)
+	result, err := a.db.Exec("INSERT INTO users(name,email,password_hash,role,created_at,updated_at) VALUES(?,?,?,?,?,?)", "User", "user@example.com", "hash", "member", "now", "now")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := result.LastInsertId()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/infrastructure/swarm/init", strings.NewReader(`{}`)).WithContext(context.WithValue(context.Background(), userKey{}, id))
+	w := httptest.NewRecorder()
+	a.infrastructureSwarmInit(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("non-admin init status = %d", w.Code)
+	}
+}
+
+func TestInventoryLimitIsBounded(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/infrastructure/containers?limit=999", nil)
+	if got := inventoryLimit(request); got != 200 {
+		t.Fatalf("maximum inventory limit = %d", got)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/infrastructure/containers?limit=0", nil)
+	if got := inventoryLimit(request); got != 50 {
+		t.Fatalf("default inventory limit = %d", got)
 	}
 }
