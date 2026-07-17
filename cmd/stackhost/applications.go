@@ -86,7 +86,13 @@ func validateSource(sourceType string, input sourceInput) sourceResult {
 		}
 	}
 	if sourceType == "compose" {
-		compose := composevalidator.Validate(input.ComposeYAML)
+		environment := map[string]string{}
+		for _, variable := range input.Environment {
+			if variable.Value != "" {
+				environment[variable.Key] = variable.Value
+			}
+		}
+		compose := composevalidator.ValidateWithEnvironment(input.ComposeYAML, environment)
 		result.Errors = append(result.Errors, compose.Errors...)
 		result.Warnings = append(result.Warnings, compose.Warnings...)
 		result.Summary = compose.Summary

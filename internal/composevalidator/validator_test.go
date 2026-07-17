@@ -30,3 +30,10 @@ func TestValidateComposeExtractsVariables(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateComposeUsesProvidedEnvironment(t *testing.T) {
+	result := ValidateWithEnvironment("services:\n  web:\n    image: nginx:1.27\n    environment:\n      DATABASE_URL: ${DATABASE_URL:?required}\n", map[string]string{"DATABASE_URL": "postgres://db"})
+	if !result.Valid {
+		t.Fatalf("expected configured variable to validate: %+v", result)
+	}
+}

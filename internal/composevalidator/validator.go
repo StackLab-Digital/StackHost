@@ -38,6 +38,10 @@ type EnvironmentVariable struct {
 var variableReference = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?])(.*?))?\}`)
 
 func Validate(yaml string) Result {
+	return ValidateWithEnvironment(yaml, nil)
+}
+
+func ValidateWithEnvironment(yaml string, environment map[string]string) Result {
 	result := Result{Summary: Summary{Services: []string{}, Images: []string{}, Ports: []string{}, Volumes: []string{}, Networks: []string{}, EnvironmentVariables: []EnvironmentVariable{}}}
 	if strings.TrimSpace(yaml) == "" {
 		result.Errors = append(result.Errors, "Cole um arquivo Docker Compose para continuar.")
@@ -45,7 +49,11 @@ func Validate(yaml string) Result {
 	}
 	rawDocument := yamlValue(yaml)
 	extractAllVariables(&result.Summary, rawDocument)
-	config := types.ConfigDetails{WorkingDir: ".", ConfigFiles: []types.ConfigFile{{Filename: "stackhost.yml", Content: []byte(yaml)}}, Environment: types.Mapping{"COMPOSE_PROJECT_NAME": "stackhost"}}
+	composeEnvironment := types.Mapping{"COMPOSE_PROJECT_NAME": "stackhost"}
+	for key, value := range environment {
+		composeEnvironment[key] = value
+	}
+	config := types.ConfigDetails{WorkingDir: ".", ConfigFiles: []types.ConfigFile{{Filename: "stackhost.yml", Content: []byte(yaml)}}, Environment: composeEnvironment}
 	project, err := loader.LoadWithContext(context.Background(), config, func(options *loader.Options) {
 		options.SetProjectName("stackhost", true)
 	})
