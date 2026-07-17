@@ -30,6 +30,7 @@ type SourceData = {
   source_type: string;
   configured: boolean;
   payload?: Record<string, any>;
+  summary?: ApplicationData["source_summary"];
 };
 type Validation = {
   valid: boolean;
@@ -120,6 +121,9 @@ async function loadSource() {
   );
   sourceType.value =
     source.value.source_type || application.value?.source_type || "compose";
+  if (!detectedVariables.value.length) {
+    detectedVariables.value = source.value.summary?.environment_variables || [];
+  }
   const payload = source.value.payload || {};
   composeYaml.value = payload.compose_yaml || "";
   image.value = payload.image || "";

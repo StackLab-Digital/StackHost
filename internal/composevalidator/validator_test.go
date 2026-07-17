@@ -37,3 +37,15 @@ func TestValidateComposeUsesProvidedEnvironment(t *testing.T) {
 		t.Fatalf("expected configured variable to validate: %+v", result)
 	}
 }
+
+func TestValidateComposeExtractsLiteralEnvironmentKeys(t *testing.T) {
+	result := Validate("services:\n  web:\n    image: nginx:1.27\n    environment:\n      APP_ENV: production\n      API_TOKEN: value\n  worker:\n    image: worker:1.0\n    environment:\n      - QUEUE_NAME=default\n")
+	if len(result.Summary.EnvironmentVariables) != 3 {
+		t.Fatalf("unexpected variables: %+v", result.Summary.EnvironmentVariables)
+	}
+	for _, item := range result.Summary.EnvironmentVariables {
+		if item.Name == "API_TOKEN" && !item.Secret {
+			t.Fatalf("expected literal secret heuristic: %+v", item)
+		}
+	}
+}

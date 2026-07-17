@@ -1058,6 +1058,13 @@ select:focus {
   display: grid;
   gap: 20px;
 }
+.source-editor > div {
+  min-width: 0;
+}
+.source-editor .compose-editor-shell {
+  width: 100%;
+  min-width: 0;
+}
 .source-switch {
   display: flex;
   flex-wrap: wrap;

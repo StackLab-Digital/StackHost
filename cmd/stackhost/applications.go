@@ -420,6 +420,18 @@ func (a *app) applicationSource(w http.ResponseWriter, r *http.Request, id int64
 			jsonError(w, 500, "source_unreadable", "A configuração da origem está inválida.")
 			return
 		}
+		var summaryJSON string
+		_ = a.db.QueryRow("SELECT coalesce(summary_json,'{}') FROM application_sources WHERE application_id=?", id).Scan(&summaryJSON)
+		var summary map[string]any
+		_ = json.Unmarshal([]byte(summaryJSON), &summary)
+		detected, _ := summary["environment_variables"].([]any)
+		if sourceType == "compose" && len(detected) == 0 {
+			result := validateSource(sourceType, input)
+			summary = sourceSummary(input, result)
+			if refreshed, marshalErr := json.Marshal(summary); marshalErr == nil {
+				_, _ = a.db.Exec("UPDATE application_sources SET summary_json=? WHERE application_id=?", refreshed, id)
+			}
+		}
 		for i := range input.Environment {
 			if input.Environment[i].Secret {
 				input.Environment[i].Value = ""
@@ -427,7 +439,7 @@ func (a *app) applicationSource(w http.ResponseWriter, r *http.Request, id int64
 			}
 		}
 		inputBytes, _ := json.Marshal(input)
-		json.NewEncoder(w).Encode(map[string]any{"source_type": sourceType, "configured": true, "payload": json.RawMessage(inputBytes)})
+		json.NewEncoder(w).Encode(map[string]any{"source_type": sourceType, "configured": true, "payload": json.RawMessage(inputBytes), "summary": summary})
 		return
 	}
 	if r.Method != http.MethodPut && r.Method != http.MethodPost {

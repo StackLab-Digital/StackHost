@@ -36,6 +36,7 @@ type EnvironmentVariable struct {
 }
 
 var variableReference = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?])(.*?))?\}`)
+var environmentKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func Validate(yaml string) Result {
 	return ValidateWithEnvironment(yaml, nil)
@@ -144,12 +145,22 @@ func extractVariables(summary *Summary, doc *yaml.Node, serviceName string) {
 		if node.Kind == yaml.MappingNode {
 			for i := 0; i+1 < len(node.Content); i += 2 {
 				key, value := node.Content[i], node.Content[i+1]
+				if inEnvironment {
+					addEnvironmentVariable(summary, key.Value, serviceName)
+				}
 				walk(value, inEnvironment || key.Value == "environment")
 			}
 			return
 		}
 		if node.Kind == yaml.SequenceNode {
 			for _, child := range node.Content {
+				if inEnvironment && child.Kind == yaml.ScalarNode {
+					name := child.Value
+					if separator := strings.IndexByte(name, '='); separator >= 0 {
+						name = name[:separator]
+					}
+					addEnvironmentVariable(summary, name, serviceName)
+				}
 				walk(child, inEnvironment)
 			}
 			return
@@ -181,6 +192,15 @@ func extractVariables(summary *Summary, doc *yaml.Node, serviceName string) {
 			}
 		}
 	}
+}
+
+func addEnvironmentVariable(summary *Summary, name, serviceName string) {
+	if !environmentKey.MatchString(name) {
+		return
+	}
+	summary.EnvironmentVariables = append(summary.EnvironmentVariables, EnvironmentVariable{
+		Name: name, Secret: isSecretName(name), Services: []string{serviceName},
+	})
 }
 
 func isSecretName(name string) bool {
