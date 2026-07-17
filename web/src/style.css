@@ -282,6 +282,7 @@ h2 {
   background: transparent;
   color: #aeb4c0;
 }
+.icon-action { width: 34px; height: 34px; padding: 0; }
 .primary:hover,
 .secondary:hover,
 .ghost:hover {
