@@ -471,21 +471,35 @@ h2 {
 .application-wizard-nav .wizard-stepper { margin: 0; border-bottom: 0; }
 .application-wizard-body { flex: 1; min-height: 0; overflow: hidden; padding: 24px 32px; }
 .wizard-step-content { width: 100%; height: 100%; min-height: 0; overflow: auto; max-width: 1280px; margin: 0 auto; }
+.wizard-step-content--compose { display: flex; flex-direction: column; overflow: hidden; max-width: none; }
 .application-wizard-foot { display: flex; align-items: center; justify-content: space-between; border-top: 0; border-bottom: 0; }
 .wizard-foot-actions { display: flex; gap: 10px; }
-.compose-page-grid { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 7fr) minmax(220px, 3fr); gap: 16px; }
-.compose-page-summary { min-height: 0; overflow: auto; }
-.compose-page-summary .source-summary { max-height: 180px; overflow: auto; }
-.application-wizard-page .compose-editor-shell { height: 100%; min-height: 0; }
-.application-wizard-page .compose-dropzone { height: calc(100% - 72px); min-height: 0; }
+.compose-step, .compose-workspace, .compose-editor-shell { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.compose-step-header { flex: 0 0 auto; margin-bottom: 12px; }
+.compose-step-header h2 { margin: 0; }
+.compose-step-header p { margin: 4px 0 0; }
+.compose-workspace { width: 100%; }
+.compose-editor-main { flex: 1; min-height: 0; }
+.compose-editor-shell--fill { height: 100%; }
+.compose-editor-shell--fill .compose-editor-main, .compose-editor-shell--fill .compose-editor { flex: 1; min-height: calc(17 * 1.5em + 32px); }
+.compose-editor-shell--fill .cm-editor, .compose-editor { height: 100%; min-height: 0; }
+.compose-toolbar { flex: 0 0 42px; min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; }
+.compose-toolbar-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.editor-toolbar-button { height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #363a43; border-radius: 6px; background: #1b1e24; color: inherit; font-size: 12px; line-height: 1; }
+.editor-menu { position: relative; }
+.editor-menu summary { list-style: none; cursor: pointer; }
+.editor-menu summary::-webkit-details-marker { display: none; }
+.editor-menu-content { position: absolute; z-index: 3; right: 0; top: 34px; display: grid; min-width: 170px; padding: 5px; border: 1px solid #363a43; border-radius: 6px; background: #1b1e24; box-shadow: 0 8px 24px #0008; }
+.editor-menu-content button { padding: 8px; border: 0; background: transparent; color: inherit; text-align: left; }
+.compose-validation-status { display: inline-flex; align-items: center; gap: 4px; color: #aeb4c0; font-size: 12px; }
+.compose-statusbar { flex: 0 0 28px; min-height: 28px; display: flex; justify-content: space-between; align-items: center; padding: 0 10px; color: #aeb4c0; font-size: 11px; }
 .application-wizard-page .compose-editor { height: 100%; min-height: 0; }
 .application-wizard-page .cm-editor { height: 100% !important; }
 .wizard-confirm { position: fixed; z-index: 20; right: 24px; bottom: 24px; width: min(420px, calc(100vw - 32px)); padding: 18px; border: 1px solid #59621d; border-radius: 12px; background: #1b1e24; box-shadow: 0 18px 50px #0008; }
 .wizard-confirm p { color: #aeb4c0; }
 .wizard-confirm > div { display: flex; justify-content: flex-end; gap: 10px; }
 @media (min-width: 800px) {
-  .application-wizard-page .wizard-step-content:has(.compose-editor-shell) { display: grid; grid-template-rows: auto 1fr; }
-  .application-wizard-page .wizard-step-content:has(.compose-editor-shell) > section { min-height: 0; }
+  .wizard-step-content--compose { min-height: 0; }
 }
 @media (max-width: 700px) {
   .application-wizard-page { margin: 0; height: 100%; }
@@ -495,10 +509,13 @@ h2 {
   .application-wizard-foot { position: sticky; bottom: 0; }
   .wizard-foot-actions { flex: 1; justify-content: flex-end; }
   .wizard-foot-actions .primary { min-width: 0; }
-  .application-wizard-page .compose-editor-shell { height: clamp(280px, calc(100dvh - 484px), 460px); }
-  .application-wizard-page .compose-dropzone { height: calc(100% - 72px); }
-  .compose-page-grid { height: auto; grid-template-columns: 1fr; }
-  .compose-page-summary { overflow: visible; }
+  .compose-editor-shell--fill { min-height: 360px; }
+  .compose-toolbar-actions span { display: none; }
+}
+@media (max-height: 800px) and (min-width: 701px) {
+  .application-wizard-head { min-height: auto; padding-top: 12px; padding-bottom: 10px; }
+  .application-wizard-nav { min-height: auto; padding-top: 8px; padding-bottom: 8px; }
+  .application-wizard-body { padding-top: 14px; padding-bottom: 14px; }
 }
 .review-section {
   margin: 18px 0;

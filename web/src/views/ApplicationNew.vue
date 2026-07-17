@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import ApplicationWizard from "../components/applications/ApplicationWizard.vue";
 import ComposeCodeEditor from "../components/applications/ComposeCodeEditor.vue";
 import EnvironmentVariablesEditor from "../components/applications/EnvironmentVariablesEditor.vue";
-import SourceSummary from "../components/applications/SourceSummary.vue";
 import SourceValidationPanel from "../components/applications/SourceValidationPanel.vue";
 import { api, RequestError } from "../composables/useApi";
 import { useToast } from "../composables/useToast";
@@ -17,7 +16,8 @@ const saving = ref(false);
 const validating = ref(false);
 const discardOpen = ref(false);
 const fieldErrors = ref<Record<string, string>>({});
-const validation = ref<{ valid: boolean; errors: string[]; warnings: string[] } | null>(null);
+type SourceValidation = { valid: boolean; errors: string[]; warnings: string[]; summary?: { services?: string[]; images?: string[]; ports?: string[]; volumes?: string[]; networks?: string[]; secrets?: string[]; configs?: string[] } };
+const validation = ref<SourceValidation | null>(null);
 const newApp = ref({ name: "", description: "", docker_stack_name: "", source_type: "" });
 const source = ref({ compose_yaml: "", image: "", container_port: null as number | null, replicas: 1, repository_url: "", branch: "main", dockerfile_path: "Dockerfile", build_context: ".", command: "", entrypoint: "", environment: [] as Array<{ key: string; value: string; secret: boolean }>, template_slug: "", template_version: "" });
 const catalog = ref<Array<{ slug: string; name: string; description: string; version: string; category: string; source: string }>>([]);
@@ -34,12 +34,10 @@ const categories = computed(() => [...new Set(catalog.value.map((item) => item.c
 const visibleCatalog = computed(() => catalog.value.filter((item) => (!query.value || `${item.name} ${item.description}`.toLowerCase().includes(query.value.toLowerCase())) && (category.value === "all" || item.category === category.value)));
 const selectedTemplate = computed(() => catalog.value.find((item) => item.slug === source.value.template_slug));
 const summary = computed(() => ({
-  services: [...source.value.compose_yaml.matchAll(/^\s{2}([\w.-]+):\s*$/gm)].map((m) => m[1]),
-  images: [...source.value.compose_yaml.matchAll(/^\s+image:\s*([^\s#]+)/gm)].map((m) => m[1]),
-  ports: [...source.value.compose_yaml.matchAll(/^\s+-\s*["']?([^"']+)["']?\s*$/gm)].map((m) => m[1]).filter((p) => p.includes(":")),
-  volumes: [...source.value.compose_yaml.matchAll(/^\s+volumes:\s*$/gm)],
-  networks: [...source.value.compose_yaml.matchAll(/^\s+networks:\s*$/gm)],
+  services: validation.value?.summary?.services || [], images: validation.value?.summary?.images || [], ports: validation.value?.summary?.ports || [],
+  volumes: validation.value?.summary?.volumes || [], networks: validation.value?.summary?.networks || [],
 }));
+watch(() => source.value.compose_yaml, () => { if (validation.value) validation.value = null; });
 const dirty = computed(() => Boolean(newApp.value.name || newApp.value.description || newApp.value.source_type || source.value.compose_yaml || source.value.image || source.value.repository_url));
 function goBack() {
   if (dirty.value) discardOpen.value = true;
@@ -85,8 +83,8 @@ onBeforeRouteLeave((_to, _from, next) => {
 
 <template>
   <ApplicationWizard :step="step" :busy="saving" :validating="validating" :source-type="newApp.source_type" :can-continue="step !== 2 || Boolean(newApp.source_type)" @close="goBack" @back="step -= 1" @next="next" @draft="create(true)" @create="create()">
-    <div class="wizard-step-content">
-      <p class="kicker">ETAPA {{ step }} DE 4</p>
+    <div class="wizard-step-content" :class="{ 'wizard-step-content--compose': step === 3 && newApp.source_type === 'compose' }">
+      <p v-if="!(step === 3 && newApp.source_type === 'compose')" class="kicker">ETAPA {{ step }} DE 4</p>
       <section v-if="step === 1">
         <h2>Identifique a aplicação</h2>
         <label>Nome<input v-model="newApp.name" autofocus required placeholder="Ex.: Frontend" /><small v-if="fieldErrors.name" class="error-field">{{ fieldErrors.name }}</small></label>
@@ -97,7 +95,7 @@ onBeforeRouteLeave((_to, _from, next) => {
       <section v-else-if="step === 2"><h2>Como esta aplicação será publicada?</h2><div class="source-grid"><button v-for="item in sourceTypes" :key="item.value" type="button" class="source-option" :class="{ selected: newApp.source_type === item.value }" @click="selectSource(item.value)"><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></button></div></section>
       <section v-else-if="step === 3">
         <h2>Configure {{ sourceTypes.find((item) => item.value === newApp.source_type)?.label }}</h2>
-        <div v-if="newApp.source_type === 'compose'" class="compose-page-grid"><ComposeCodeEditor v-model="source.compose_yaml" @error="toast.error" /><div class="compose-page-summary"><SourceSummary :services="summary.services" :images="summary.images" :ports="summary.ports" :volumes="summary.volumes.map(() => 'volume')" :networks="summary.networks.map(() => 'network')" :empty="!source.compose_yaml" /><SourceValidationPanel v-if="validation" :valid="validation.valid" :errors="validation.errors" :warnings="validation.warnings" /></div><small v-if="fieldErrors.source" class="error-field">{{ fieldErrors.source }}</small></div>
+        <div v-if="newApp.source_type === 'compose'" class="compose-step"><header class="compose-step-header"><h2>Docker Compose</h2><p>Edite o arquivo que define os serviços da aplicação.</p></header><div class="compose-workspace"><ComposeCodeEditor v-model="source.compose_yaml" fill :validation="validation ? (validation.valid ? (validation.warnings.length ? 'warning' : 'valid') : 'invalid') : ''" @error="toast.error" /><SourceValidationPanel v-if="validation && (!validation.valid || validation.warnings.length)" :valid="validation.valid" :errors="validation.errors" :warnings="validation.warnings" /></div><small v-if="fieldErrors.source" class="error-field">{{ fieldErrors.source }}</small></div>
         <div v-else-if="newApp.source_type === 'image'" class="source-form-stack"><h3>Configure a imagem Docker</h3><label>Imagem<input v-model="source.image" placeholder="nginx:1.27-alpine" /></label><small class="muted">Imagem que será utilizada para iniciar a aplicação.</small><label>Porta interna (opcional)<input v-model.number="source.container_port" type="number" min="1" max="65535" placeholder="Ex.: 80" /></label><label>Réplicas<div class="stepper-control"><button type="button" aria-label="Diminuir réplicas" @click="source.replicas = Math.max(1, source.replicas - 1)">−</button><input v-model.number="source.replicas" type="number" min="1" max="20" aria-label="Quantidade de réplicas" /><button type="button" aria-label="Aumentar réplicas" @click="source.replicas = Math.min(20, source.replicas + 1)">+</button></div><small class="muted">Quantidade de instâncias mantidas em execução.</small></label><EnvironmentVariablesEditor v-model="source.environment" /></div>
         <div v-else-if="newApp.source_type === 'git'" class="source-form-stack"><h3>Configure o repositório Git</h3><label>URL do repositório<input v-model="source.repository_url" placeholder="https://github.com/empresa/aplicacao.git" /><small class="muted">Aceitamos HTTPS ou SSH. Tokens embutidos na URL não são permitidos.</small></label><div class="form-grid"><label>Branch<input v-model="source.branch" /></label><label>Dockerfile<input v-model="source.dockerfile_path" /><small class="muted">Caminho relativo à raiz do repositório.</small></label><label>Contexto<input v-model="source.build_context" /><small class="muted">Diretório enviado ao processo de build.</small></label></div><EnvironmentVariablesEditor v-model="source.environment" /></div>
         <div v-else-if="newApp.source_type === 'catalog'" class="source-grid"><div class="catalog-toolbar full-width"><input v-model="query" aria-label="Buscar templates" placeholder="Buscar templates" /><select v-model="category" aria-label="Filtrar por categoria"><option value="all">Todas as categorias</option><option v-for="item in categories" :key="item" :value="item">{{ item }}</option></select></div><button v-for="item in visibleCatalog" :key="item.slug" type="button" class="source-option" :class="{ selected: source.template_slug === item.slug }" @click="source.template_slug = item.slug; source.template_version = item.version"><strong>{{ item.name }} · {{ item.version }}</strong><small>{{ item.description }}</small></button><small v-if="!source.template_slug" class="error-field">Selecione um template para continuar.</small><div v-if="selectedTemplate" class="source-preview full-width"><span>Template</span><strong>{{ selectedTemplate.name }}</strong><span>Versão</span><strong>{{ selectedTemplate.version }}</strong></div></div>

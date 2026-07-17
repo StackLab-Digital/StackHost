@@ -25,9 +25,10 @@ import {
   drawSelection,
 } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
+import { MoreHorizontal, FilePlus2, Upload, Check, AlertTriangle, Circle } from "lucide-vue-next";
 
 const props = withDefaults(
-  defineProps<{ modelValue: string; validation?: string }>(),
+  defineProps<{ modelValue: string; validation?: string; fill?: boolean }>(),
   { validation: "" },
 );
 const emit = defineEmits<{
@@ -86,7 +87,7 @@ function createState(value: string) {
           emit("update:modelValue", update.state.doc.toString());
       }),
       EditorView.theme({
-        "&": { backgroundColor: "#15171b", color: "#e7eaf0", height: "420px" },
+        "&": { backgroundColor: "#15171b", color: "#e7eaf0", height: "100%" },
         ".cm-content": {
           fontFamily: "Space Mono, monospace",
           fontSize: "13px",
@@ -140,6 +141,9 @@ function readFile(file: File) {
 function chooseFile() {
   fileInput.value?.click();
 }
+function copyContent() {
+  navigator.clipboard?.writeText(props.modelValue);
+}
 function handleFileInput(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
@@ -159,16 +163,10 @@ watch(() => props.modelValue, setValue);
 </script>
 
 <template>
-  <div class="compose-editor-shell">
+  <div class="compose-editor-shell" :class="{ 'compose-editor-shell--fill': fill }">
     <div class="compose-toolbar">
-      <span class="compose-file">compose.yml</span>
-      <button type="button" class="ghost" @click="chooseFile">
-        Carregar arquivo
-      </button>
-      <button type="button" class="ghost" @click="loadExample">
-        Inserir exemplo
-      </button>
-      <button type="button" class="ghost" @click="clear">Limpar</button>
+      <span class="compose-file">📄 compose.yml <small>YAML</small></span>
+      <span class="compose-toolbar-actions"><button type="button" class="editor-toolbar-button" aria-label="Carregar arquivo Compose" title="Carregar arquivo Compose" @click="chooseFile"><Upload :size="14" /><span>Abrir</span></button><button type="button" class="editor-toolbar-button" title="Inserir exemplo de Docker Compose" @click="loadExample"><FilePlus2 :size="14" /><span>Exemplo</span></button><details class="editor-menu"><summary class="editor-toolbar-button" aria-label="Mais opções"><MoreHorizontal :size="16" /></summary><div class="editor-menu-content"><button type="button" @click="copyContent">Copiar conteúdo</button><button type="button" @click="clear">Limpar editor</button></div></details><span class="compose-validation-status"><Check v-if="validation === 'valid'" :size="14" /> <AlertTriangle v-else-if="validation" :size="14" /> <Circle v-else :size="14" /> {{ validation === 'valid' ? 'Válido' : validation === 'warning' ? 'Avisos' : validation === 'invalid' ? 'Inválido' : 'Não validado' }}</span></span>
     </div>
     <input
       ref="fileInput"
@@ -177,20 +175,15 @@ watch(() => props.modelValue, setValue);
       accept=".yml,.yaml,text/yaml"
       @change="handleFileInput"
     />
-    <div class="compose-dropzone" @dragover.prevent @drop="handleDrop">
+    <div class="compose-editor-main compose-dropzone" @dragover.prevent @drop="handleDrop">
       <div
         ref="editorHost"
         class="compose-editor"
         aria-label="Editor Docker Compose"
       />
-      <small
-        >Solte um arquivo .yml ou .yaml aqui · Cmd/Ctrl + Enter para
-        validar</small
-      >
     </div>
     <div class="compose-statusbar">
-      <span>YAML</span><span>{{ modelValue.split("\n").length }} linhas</span
-      ><span>{{ modelValue.length }} caracteres</span>
+      <span>Ln 1, Col 1 · {{ modelValue.split("\n").length }} linhas</span><span>YAML · {{ validation === 'valid' ? 'Válido' : validation === 'warning' ? 'Avisos' : validation === 'invalid' ? 'Inválido' : 'Não validado' }}</span>
     </div>
   </div>
 </template>
