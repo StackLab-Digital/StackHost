@@ -44,9 +44,11 @@ onUnmounted(() => document.removeEventListener("keydown", keydown));
     <div v-if="open" class="mobile-overlay" @click="closeMenu" />
     <aside :class="{ open }">
       <div class="brand">
-        <img class="brand-logo" src="/brand/stackhost-logo.png" alt="" /><span
-          >StackHost</span
-        >
+        <img
+          class="brand-logo"
+          src="/brand/stackhost-logo-public.png"
+          alt=""
+        /><span>StackHost</span>
       </div>
       <nav>
         <RouterLink
