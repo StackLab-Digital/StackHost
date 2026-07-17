@@ -235,7 +235,7 @@ func (a *app) createSession(w http.ResponseWriter, r *http.Request, id int64) {
 	hash := sha256.Sum256([]byte(token))
 	tokenHash := hex.EncodeToString(hash[:])
 	now := time.Now().UTC()
-	a.db.Exec("INSERT INTO sessions(id,user_id,token_hash,expires_at,created_at,last_seen_at) VALUES(?,?,?,?,?,?)", token, id, tokenHash, now.Add(24*time.Hour).Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339))
+	a.db.Exec("INSERT INTO sessions(id,user_id,token_hash,expires_at,created_at,last_seen_at,user_agent,ip_address) VALUES(?,?,?,?,?,?,?,?)", token, id, tokenHash, now.Add(24*time.Hour).Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339), r.UserAgent(), r.RemoteAddr)
 	http.SetCookie(w, &http.Cookie{Name: "stackhost_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: os.Getenv("STACKHOST_COOKIE_SECURE") == "true", MaxAge: 86400})
 }
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
@@ -266,6 +266,7 @@ func (a *app) auth(next http.HandlerFunc) http.HandlerFunc {
 			jsonError(w, 401, "unauthorized", "Sessão expirada.")
 			return
 		}
+		_, _ = a.db.Exec("UPDATE sessions SET last_seen_at=? WHERE token_hash=?", time.Now().UTC().Format(time.RFC3339), hex.EncodeToString(hash[:]))
 		r = r.WithContext(context.WithValue(r.Context(), userKey{}, id))
 		next(w, r)
 	}
