@@ -7,8 +7,9 @@ dev:
 	go run ./cmd/stackhost
 test:
 	go test ./...
+	cd web && npm run test
 lint:
-	gofmt -w cmd internal 2>/dev/null || true
+	gofmt -w cmd internal
 	go vet ./...
 	cd web && npm run typecheck && npm run lint
 build:
