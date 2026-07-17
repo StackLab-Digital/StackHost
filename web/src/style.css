@@ -452,15 +452,15 @@ h2 {
   flex-direction: column;
   margin: 0;
   padding-top: 8px;
-  background: #101216;
+  background: #101114;
 }
 .application-wizard-head,
 .application-wizard-nav,
 .application-wizard-foot {
   flex: 0 0 auto;
   padding: 20px 32px;
-  border-bottom: 1px solid #292d35;
-  background: #14161a;
+  border: 0;
+  background: #101114;
 }
 .application-wizard-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .application-wizard-head { min-height: 108px; padding-top: 24px; padding-bottom: 18px; }
@@ -468,7 +468,7 @@ h2 {
 .application-wizard-head h1 { margin: 2px 0 4px; }
 .application-wizard-head .muted { margin: 0; }
 .application-wizard-nav { min-height: 68px; padding-top: 14px; padding-bottom: 12px; }
-.application-wizard-nav .wizard-stepper { margin: 0; }
+.application-wizard-nav .wizard-stepper { margin: 0; border-bottom: 0; }
 .application-wizard-body { flex: 1; min-height: 0; overflow: hidden; padding: 24px 32px; }
 .wizard-step-content { width: 100%; height: 100%; min-height: 0; overflow: auto; max-width: 1280px; margin: 0 auto; }
 .application-wizard-foot { display: flex; align-items: center; justify-content: space-between; border-top: 0; border-bottom: 0; }
@@ -495,7 +495,7 @@ h2 {
   .application-wizard-foot { position: sticky; bottom: 0; }
   .wizard-foot-actions { flex: 1; justify-content: flex-end; }
   .wizard-foot-actions .primary { min-width: 0; }
-  .application-wizard-page .compose-editor-shell { height: 460px; }
+  .application-wizard-page .compose-editor-shell { height: clamp(280px, calc(100dvh - 484px), 460px); }
   .application-wizard-page .compose-dropzone { height: calc(100% - 72px); }
   .compose-page-grid { height: auto; grid-template-columns: 1fr; }
   .compose-page-summary { overflow: visible; }
