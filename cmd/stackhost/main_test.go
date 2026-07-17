@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/StackLab-Digital/StackHost/internal/secure"
 )
 
 func testApp(t *testing.T) *app {
@@ -20,7 +22,8 @@ func testApp(t *testing.T) *app {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return &app{db: db, sessionSecret: "test", events: make(chan map[string]any, 4), loginAttempts: make(map[string]attempt)}
+	cipher, _ := secure.New("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	return &app{db: db, sessionSecret: "test", cipher: cipher, events: make(chan map[string]any, 4), loginAttempts: make(map[string]attempt)}
 }
 
 func TestOnboardingAndSession(t *testing.T) {
@@ -192,6 +195,29 @@ func TestInfrastructureInitRequiresAdmin(t *testing.T) {
 	a.infrastructureSwarmInit(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("non-admin init status = %d", w.Code)
+	}
+}
+
+func TestApplicationSourceIsEncryptedAndSecretsAreMasked(t *testing.T) {
+	a := testApp(t)
+	_, _ = a.db.Exec("INSERT INTO users(id,name,email,password_hash,role,created_at,updated_at) VALUES(1,'Admin','admin@example.com','hash','admin','now','now')")
+	_, _ = a.db.Exec("INSERT INTO projects(id,name,slug,description,status,created_at,updated_at) VALUES(1,'Demo','demo','','active','now','now')")
+	_, _ = a.db.Exec("INSERT INTO applications(id,project_id,name,description,slug,source_type,status,configuration_status,created_at,updated_at) VALUES(1,1,'Web','','web','compose','draft','draft','now','now')")
+	ctx := context.WithValue(context.Background(), userKey{}, int64(1))
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/applications/1/source", strings.NewReader(`{"source_type":"compose","source":{"compose_yaml":"services:\n  web:\n    image: nginx:1.27-alpine","environment":[{"key":"TOKEN","value":"top-secret","secret":true}]}}`)).WithContext(ctx)
+	w := httptest.NewRecorder()
+	a.applicationRouteV2(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "configured") {
+		t.Fatalf("source save = %d %s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	a.applicationRouteV2(w, httptest.NewRequest(http.MethodGet, "/api/v1/applications/1/source", nil).WithContext(ctx))
+	if strings.Contains(w.Body.String(), "top-secret") || !strings.Contains(w.Body.String(), "has_value") {
+		t.Fatalf("secret leaked or was not masked: %s", w.Body.String())
+	}
+	var encrypted string
+	if err := a.db.QueryRow("SELECT hex(encrypted_payload) FROM application_sources WHERE application_id=1").Scan(&encrypted); err != nil || strings.Contains(encrypted, "top-secret") {
+		t.Fatalf("encrypted payload invalid: %v", err)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	dockerreader "github.com/StackLab-Digital/StackHost/internal/docker"
+	"github.com/StackLab-Digital/StackHost/internal/secure"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -30,6 +31,7 @@ type app struct {
 	sessionSecret string
 	events        chan map[string]any
 	docker        *dockerreader.Reader
+	cipher        *secure.Cipher
 	loginMu       sync.Mutex
 	loginAttempts map[string]attempt
 }
@@ -43,8 +45,13 @@ func main() {
 	dataDir := getenv("STACKHOST_DATA_DIR", "./data")
 	appEnv := getenv("STACKHOST_APP_ENV", "development")
 	sessionSecret := getenv("STACKHOST_SESSION_SECRET", "development-only-change-me")
+	encryptionKey := getenv("STACKHOST_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	if appEnv == "production" && (sessionSecret == "development-only-change-me" || len(sessionSecret) < 32) {
 		panic("STACKHOST_SESSION_SECRET must be a strong value in production")
+	}
+	cipher, err := secure.New(encryptionKey)
+	if err != nil {
+		panic("STACKHOST_ENCRYPTION_KEY must be base64 encoded 32 bytes")
 	}
 	if err := os.MkdirAll(dataDir, 0750); err != nil {
 		panic(err)
@@ -58,7 +65,7 @@ func main() {
 		panic(err)
 	}
 	dr, _ := dockerreader.NewReader()
-	a := &app{db: db, sessionSecret: sessionSecret, events: make(chan map[string]any, 32), docker: dr, loginAttempts: make(map[string]attempt)}
+	a := &app{db: db, sessionSecret: sessionSecret, cipher: cipher, events: make(chan map[string]any, 32), docker: dr, loginAttempts: make(map[string]attempt)}
 	s := &http.Server{Addr: addr, Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -86,7 +93,26 @@ func migrate(db *sql.DB) error {
 	}
 	var applied int
 	_ = db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=1").Scan(&applied)
-	if applied > 0 {
+	if applied == 0 {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_login_at TEXT); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, token_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, revoked_at TEXT, user_agent TEXT, ip_address TEXT); CREATE TABLE IF NOT EXISTS projects(id INTEGER PRIMARY KEY, name TEXT NOT NULL, slug TEXT UNIQUE NOT NULL, description TEXT, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS applications(id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, slug TEXT NOT NULL, source_type TEXT NOT NULL, docker_stack_name TEXT, status TEXT NOT NULL DEFAULT 'unknown', created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS audit_logs(id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL, resource_type TEXT, resource_id TEXT, metadata TEXT, ip_address TEXT, created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash); CREATE INDEX IF NOT EXISTS idx_apps_project ON applications(project_id);`); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if _, err = tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES(1,?)", time.Now().UTC().Format(time.RFC3339)); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+	}
+	var version2 int
+	_ = db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=2").Scan(&version2)
+	if version2 > 0 {
 		return nil
 	}
 	tx, err := db.Begin()
@@ -94,10 +120,12 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_login_at TEXT); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, token_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, revoked_at TEXT, user_agent TEXT, ip_address TEXT); CREATE TABLE IF NOT EXISTS projects(id INTEGER PRIMARY KEY, name TEXT NOT NULL, slug TEXT UNIQUE NOT NULL, description TEXT, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS applications(id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, slug TEXT NOT NULL, source_type TEXT NOT NULL, docker_stack_name TEXT, status TEXT NOT NULL DEFAULT 'unknown', created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS audit_logs(id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL, resource_type TEXT, resource_id TEXT, metadata TEXT, ip_address TEXT, created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash); CREATE INDEX IF NOT EXISTS idx_apps_project ON applications(project_id);`); err != nil {
-		return err
+	for _, column := range []string{"description TEXT NOT NULL DEFAULT ''", "configuration_status TEXT NOT NULL DEFAULT 'draft'", "configured_at TEXT", "last_validated_at TEXT", "source_revision INTEGER NOT NULL DEFAULT 0"} {
+		if _, err = tx.Exec("ALTER TABLE applications ADD COLUMN " + column); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return err
+		}
 	}
-	if _, err = tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES(1,?)", time.Now().UTC().Format(time.RFC3339)); err != nil {
+	if _, err = tx.Exec(`UPDATE applications SET configuration_status='draft' WHERE status='unknown'; CREATE TABLE IF NOT EXISTS application_sources(id INTEGER PRIMARY KEY, application_id INTEGER NOT NULL UNIQUE REFERENCES applications(id) ON DELETE CASCADE, source_type TEXT NOT NULL, encrypted_payload BLOB NOT NULL, encryption_nonce BLOB NOT NULL, payload_version INTEGER NOT NULL DEFAULT 1, checksum TEXT NOT NULL, validation_status TEXT NOT NULL DEFAULT 'draft', validation_errors TEXT NOT NULL DEFAULT '[]', validation_warnings TEXT NOT NULL DEFAULT '[]', summary_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_application_sources_application ON application_sources(application_id); INSERT INTO schema_migrations(version,applied_at) VALUES(2,?)`, time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -116,7 +144,8 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("/api/v1/dashboard", a.auth(a.dashboard))
 	mux.HandleFunc("/api/v1/projects", a.auth(a.projects))
 	mux.HandleFunc("/api/v1/projects/", a.auth(a.projectRoute))
-	mux.HandleFunc("/api/v1/applications/", a.auth(a.applicationRoute))
+	mux.HandleFunc("/api/v1/applications/", a.auth(a.applicationRouteV2))
+	mux.HandleFunc("/api/v1/catalog", a.auth(a.catalog))
 	mux.HandleFunc("/api/v1/infrastructure", a.auth(a.infrastructure))
 	mux.HandleFunc("/api/v1/infrastructure/nodes", a.auth(a.infrastructureNodes))
 	mux.HandleFunc("/api/v1/infrastructure/services", a.auth(a.infrastructureServices))
@@ -155,7 +184,7 @@ func (a *app) ready(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var migrations int
-	if err := a.db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=1").Scan(&migrations); err != nil || migrations != 1 {
+	if err := a.db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=2").Scan(&migrations); err != nil || migrations != 1 {
 		http.Error(w, `{"status":"not_ready","reason":"migrations"}`, 503)
 		return
 	}
@@ -477,7 +506,7 @@ func (a *app) projectRoute(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) applications(w http.ResponseWriter, r *http.Request, projectID int64) {
 	if r.Method == "GET" {
-		rows, err := a.db.Query("SELECT id,name,slug,source_type,coalesce(docker_stack_name,''),status,created_at,updated_at FROM applications WHERE project_id=? ORDER BY id DESC", projectID)
+		rows, err := a.db.Query("SELECT id,name,slug,source_type,coalesce(docker_stack_name,''),coalesce(configuration_status,'draft'),created_at,updated_at FROM applications WHERE project_id=? ORDER BY id DESC", projectID)
 		if err != nil {
 			jsonError(w, 500, "internal_error", "Não foi possível listar aplicações.")
 			return
@@ -488,7 +517,7 @@ func (a *app) applications(w http.ResponseWriter, r *http.Request, projectID int
 			var id int
 			var name, slug, source, stack, status, created, updated string
 			rows.Scan(&id, &name, &slug, &source, &stack, &status, &created, &updated)
-			out = append(out, map[string]any{"id": id, "project_id": projectID, "name": name, "slug": slug, "source_type": source, "docker_stack_name": stack, "status": status, "created_at": created, "updated_at": updated})
+			out = append(out, map[string]any{"id": id, "project_id": projectID, "name": name, "slug": slug, "source_type": source, "docker_stack_name": stack, "status": status, "configuration_status": status, "created_at": created, "updated_at": updated})
 		}
 		json.NewEncoder(w).Encode(out)
 		return
@@ -498,17 +527,25 @@ func (a *app) applications(w http.ResponseWriter, r *http.Request, projectID int
 		return
 	}
 	var in struct {
-		Name            string `json:"name"`
-		Slug            string `json:"slug"`
-		SourceType      string `json:"source_type"`
-		DockerStackName string `json:"docker_stack_name"`
+		Name            string      `json:"name"`
+		Description     string      `json:"description"`
+		Slug            string      `json:"slug"`
+		SourceType      string      `json:"source_type"`
+		DockerStackName string      `json:"docker_stack_name"`
+		Source          sourceInput `json:"source"`
+		SaveAsDraft     bool        `json:"save_as_draft"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024+64*1024)
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		jsonValidation(w, map[string]string{"form": "JSON inválido."})
 		return
 	}
 	if strings.TrimSpace(in.Name) == "" {
 		jsonValidation(w, map[string]string{"name": "O nome é obrigatório."})
+		return
+	}
+	if len(in.Name) > 100 || len(in.Description) > 2000 {
+		jsonValidation(w, map[string]string{"name": "Revise o tamanho dos campos."})
 		return
 	}
 	if in.SourceType == "" {
@@ -522,18 +559,55 @@ func (a *app) applications(w http.ResponseWriter, r *http.Request, projectID int
 	if in.Slug == "" {
 		in.Slug = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(in.Name), " ", "-"))
 	}
+	result := validateSource(in.SourceType, in.Source)
+	legacyDraft := in.SourceType == "compose" && strings.TrimSpace(in.Source.ComposeYAML) == "" && len(in.Source.Environment) == 0
+	if !in.SaveAsDraft && !legacyDraft && !result.Valid {
+		json.NewEncoder(w).Encode(result)
+		return
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := a.db.Exec("INSERT INTO applications(project_id,name,slug,source_type,docker_stack_name,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", projectID, in.Name, in.Slug, in.SourceType, in.DockerStackName, "unknown", now, now)
+	configurationStatus := "draft"
+	if result.Valid {
+		configurationStatus = "configured"
+	}
+	tx, err := a.db.Begin()
+	if err != nil {
+		jsonError(w, 500, "internal_error", "Não foi possível criar a aplicação.")
+		return
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec("INSERT INTO applications(project_id,name,description,slug,source_type,docker_stack_name,status,configuration_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)", projectID, in.Name, in.Description, in.Slug, in.SourceType, in.DockerStackName, configurationStatus, configurationStatus, now, now)
 	if err != nil {
 		jsonError(w, 409, "already_exists", "Não foi possível criar a aplicação.")
 		return
 	}
 	id, _ := res.LastInsertId()
+	if result.Valid {
+		payload, _ := json.Marshal(in.Source)
+		ciphertext, nonce, cipherErr := a.cipher.Encrypt(payload)
+		checksumBytes := sha256.Sum256(payload)
+		summary, _ := json.Marshal(sourceSummary(in.Source, result))
+		errorsJSON, _ := json.Marshal(result.Errors)
+		warningsJSON, _ := json.Marshal(result.Warnings)
+		if cipherErr != nil {
+			jsonError(w, 500, "encryption_failed", "Não foi possível proteger a origem.")
+			return
+		}
+		_, err = tx.Exec(`INSERT INTO application_sources(application_id,source_type,encrypted_payload,encryption_nonce,checksum,validation_status,validation_errors,validation_warnings,summary_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, in.SourceType, ciphertext, nonce, hex.EncodeToString(checksumBytes[:]), "configured", errorsJSON, warningsJSON, summary, now, now)
+		if err != nil {
+			jsonError(w, 500, "internal_error", "Não foi possível salvar a origem.")
+			return
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		jsonError(w, 500, "internal_error", "Não foi possível criar a aplicação.")
+		return
+	}
 	if userID, ok := r.Context().Value(userKey{}).(int64); ok {
 		a.audit(userID, "application.created", "application", id)
 	}
 	a.publish("application.created", map[string]any{"id": id, "project_id": projectID})
-	json.NewEncoder(w).Encode(map[string]any{"id": id, "project_id": projectID, "name": in.Name, "slug": in.Slug, "source_type": in.SourceType, "status": "unknown"})
+	json.NewEncoder(w).Encode(map[string]any{"id": id, "project_id": projectID, "name": in.Name, "description": in.Description, "slug": in.Slug, "source_type": in.SourceType, "status": configurationStatus, "configuration_status": configurationStatus})
 }
 
 func (a *app) applicationRoute(w http.ResponseWriter, r *http.Request) {

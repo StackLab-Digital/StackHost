@@ -21,6 +21,7 @@ export type Application = {
   source_type: string;
   docker_stack_name: string;
   status: string;
+  configuration_status?: "draft" | "configured" | "invalid";
   created_at: string;
   updated_at: string;
 };
