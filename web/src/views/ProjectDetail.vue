@@ -5,7 +5,6 @@ import BaseModal from "../components/ui/BaseModal.vue";
 import ComposeCodeEditor from "../components/applications/ComposeCodeEditor.vue";
 import ApplicationWizard from "../components/applications/ApplicationWizard.vue";
 import SourceSummary from "../components/applications/SourceSummary.vue";
-import WizardStepper from "../components/applications/WizardStepper.vue";
 import EnvironmentVariablesEditor from "../components/applications/EnvironmentVariablesEditor.vue";
 import SourceValidationPanel from "../components/applications/SourceValidationPanel.vue";
 import { api, RequestError } from "../composables/useApi";
@@ -539,6 +538,7 @@ onMounted(load);
     :busy="saving"
     :validating="validating"
     :source-type="newApp.source_type"
+    :can-continue="appStep !== 2 || Boolean(newApp.source_type)"
     @close="closeWizard"
     @back="appStep -= 1"
     @next="nextAppStep"
@@ -547,7 +547,6 @@ onMounted(load);
     @save="saveApp"
   >
     <form v-if="!editApp.id" id="new-app-form" @submit.prevent="submitCreate">
-      <WizardStepper :step="appStep" />
       <p class="kicker">ETAPA {{ appStep }} DE 4</p>
       <div v-if="appStep === 1">
         <h2>Identifique a aplicação</h2>

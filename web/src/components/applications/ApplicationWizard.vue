@@ -9,6 +9,7 @@ defineProps<{
   busy?: boolean;
   validating?: boolean;
   sourceType?: string;
+  canContinue?: boolean;
 }>();
 const emit = defineEmits<{
   close: [];
@@ -39,7 +40,7 @@ const emit = defineEmits<{
       <button v-if="!editing && step > 1" class="secondary" type="button" :disabled="busy" @click="emit('back')">
         Voltar
       </button>
-      <button v-if="!editing && step < 4" class="primary" type="button" :disabled="busy || validating" @click="emit('next')">
+      <button v-if="!editing && step < 4" class="primary" type="button" :disabled="busy || validating || canContinue === false" @click="emit('next')">
         {{ validating ? "Validando…" : step === 3 && sourceType === "compose" ? "Validar e continuar" : "Continuar" }}
       </button>
       <button v-if="!editing && step === 4" class="secondary" type="button" :disabled="busy" @click="emit('draft')">
