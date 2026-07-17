@@ -221,6 +221,19 @@ func TestApplicationSourceIsEncryptedAndSecretsAreMasked(t *testing.T) {
 	}
 }
 
+func TestSourceValidationPreview(t *testing.T) {
+	a := testApp(t)
+	valid := httptest.NewRecorder()
+	a.validateSourcePreview(valid, httptest.NewRequest(http.MethodPost, "/api/v1/source/validate", strings.NewReader(`{"source_type":"compose","source":{"compose_yaml":"services:\n  web:\n    image: nginx:1.27-alpine"}}`)))
+	if valid.Code != http.StatusOK || !strings.Contains(valid.Body.String(), `"valid":true`) {
+		t.Fatalf("valid preview = %d %s", valid.Code, valid.Body.String())
+	}
+	invalid := validateSource("image", sourceInput{Image: "nginx", ContainerPort: -1})
+	if invalid.Valid {
+		t.Fatal("expected invalid image port to be rejected")
+	}
+}
+
 func TestInventoryLimitIsBounded(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/infrastructure/containers?limit=999", nil)
 	if got := inventoryLimit(request); got != 200 {
