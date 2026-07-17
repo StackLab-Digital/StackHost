@@ -21,13 +21,16 @@ type Snapshot struct {
 	Swarm         Swarm  `json:"swarm"`
 }
 type Swarm struct {
-	Active   bool   `json:"active"`
-	Message  string `json:"message,omitempty"`
-	NodeID   string `json:"node_id,omitempty"`
-	Nodes    int    `json:"nodes"`
-	Managers int    `json:"managers"`
-	Workers  int    `json:"workers"`
-	Services int    `json:"services"`
+	Active       bool   `json:"active"`
+	Message      string `json:"message,omitempty"`
+	NodeID       string `json:"node_id,omitempty"`
+	Nodes        int    `json:"nodes"`
+	Managers     int    `json:"managers"`
+	Workers      int    `json:"workers"`
+	Services     int    `json:"services"`
+	TasksRunning int    `json:"tasks_running"`
+	TasksFailed  int    `json:"tasks_failed"`
+	TasksPending int    `json:"tasks_pending"`
 }
 type Node struct {
 	ID           string `json:"id"`
@@ -97,6 +100,18 @@ func (r *Reader) Snapshot(ctx context.Context) Snapshot {
 	services, err := r.client.ServiceList(ctx, types.ServiceListOptions{})
 	if err == nil {
 		out.Swarm.Services = len(services)
+	}
+	if tasks, err := r.client.TaskList(ctx, types.TaskListOptions{}); err == nil {
+		for _, task := range tasks {
+			switch string(task.Status.State) {
+			case "running":
+				out.Swarm.TasksRunning++
+			case "failed", "rejected", "orphaned", "shutdown":
+				out.Swarm.TasksFailed++
+			case "new", "pending", "assigned", "accepted", "preparing", "ready", "starting":
+				out.Swarm.TasksPending++
+			}
+		}
 	}
 	return out
 }
