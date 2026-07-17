@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/swarm"
 	client "github.com/docker/docker/client"
 )
 
@@ -85,12 +86,21 @@ func (r *Reader) Snapshot(ctx context.Context) Snapshot {
 		out.CPUs = info.NCPU
 		out.MemoryBytes = info.MemTotal
 	}
-	swarm, err := r.client.SwarmInspect(ctx)
-	if err != nil {
+	if info.Swarm.LocalNodeState != swarm.LocalNodeStateActive {
 		out.Swarm.Message = "O host não está em um Swarm."
 		return out
 	}
 	out.Swarm.Active = true
+	out.Swarm.NodeID = info.Swarm.NodeID
+	if !info.Swarm.ControlAvailable {
+		out.Swarm.Message = "Swarm ativo; detalhes de nodes e serviços disponíveis apenas em manager."
+		return out
+	}
+	swarm, err := r.client.SwarmInspect(ctx)
+	if err != nil {
+		out.Swarm.Message = "Swarm ativo; detalhes do cluster indisponíveis."
+		return out
+	}
 	out.Swarm.NodeID = swarm.ID
 	nodes, err := r.client.NodeList(ctx, types.NodeListOptions{})
 	if err == nil {
