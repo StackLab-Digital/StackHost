@@ -345,6 +345,28 @@ h2 {
   color: #747c8c;
   font-size: 11px;
 }
+.compose-config-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(190px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.source-summary {
+  padding: 16px;
+  border: 1px solid #2d323b;
+  border-radius: 8px;
+  background: #191c21;
+}
+.source-summary h3 {
+  margin-top: 0;
+}
+.source-summary p {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0;
+  color: #aeb4c0;
+}
 .primary:disabled,
 .secondary:disabled {
   cursor: not-allowed;
@@ -1238,5 +1260,8 @@ dd {
   }
   .wizard-stepper span:not(.active) {
     display: none;
+  }
+  .compose-config-grid {
+    grid-template-columns: 1fr;
   }
 }

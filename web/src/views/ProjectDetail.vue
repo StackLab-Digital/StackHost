@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import BaseModal from "../components/ui/BaseModal.vue";
 import ComposeCodeEditor from "../components/applications/ComposeCodeEditor.vue";
@@ -50,6 +50,20 @@ const catalogTemplates = ref<
     source: string;
   }>
 >([]);
+const composeSummary = computed(() => {
+  const yaml = newSource.value.compose_yaml;
+  return {
+    services: [...yaml.matchAll(/^\s{2}([\w.-]+):\s*$/gm)].map(
+      (match) => match[1],
+    ),
+    images: [...yaml.matchAll(/^\s+image:\s*([^\s#]+)/gm)].map(
+      (match) => match[1],
+    ),
+    ports: [...yaml.matchAll(/^\s+-\s*["']?([^"']+)["']?\s*$/gm)]
+      .map((match) => match[1])
+      .filter((port) => port.includes(":")),
+  };
+});
 const sources = [
   {
     value: "catalog",
@@ -507,7 +521,29 @@ onMounted(load);
         </h2>
         <div v-if="newApp.source_type === 'compose'">
           <h3>Docker Compose</h3>
-          <ComposeCodeEditor v-model="newSource.compose_yaml" />
+          <div class="compose-config-grid">
+            <ComposeCodeEditor v-model="newSource.compose_yaml" />
+            <aside class="source-summary">
+              <h3>Resumo detectado</h3>
+              <p v-if="!newSource.compose_yaml" class="muted">
+                Valide o Compose para visualizar os serviços detectados.
+              </p>
+              <template v-else>
+                <p>
+                  <span>Serviços</span
+                  ><strong>{{ composeSummary.services.length }}</strong>
+                </p>
+                <p>
+                  <span>Imagens</span
+                  ><strong>{{ composeSummary.images.length }}</strong>
+                </p>
+                <p>
+                  <span>Portas</span
+                  ><strong>{{ composeSummary.ports.length }}</strong>
+                </p>
+              </template>
+            </aside>
+          </div>
           <small v-if="fieldErrors.source" class="error-field">{{
             fieldErrors.source
           }}</small>
