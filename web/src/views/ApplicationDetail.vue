@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import BaseModal from "../components/ui/BaseModal.vue";
+import ComposeCodeEditor from "../components/applications/ComposeCodeEditor.vue";
 import { api, RequestError } from "../composables/useApi";
 import { useToast } from "../composables/useToast";
 
@@ -406,19 +407,8 @@ onMounted(load);
         </button>
       </div>
       <div v-if="sourceType === 'compose'">
-        <label
-          >Docker Compose<textarea
-            v-model="composeYaml"
-            class="code-editor"
-            spellcheck="false"
-            placeholder="services:\n  web:\n    image: nginx:1.27-alpine"
-          />
-          <input
-            type="file"
-            accept=".yml,.yaml,text/yaml"
-            @change="readComposeFile"
-          />
-        </label>
+        <label>Docker Compose</label>
+        <ComposeCodeEditor v-model="composeYaml" @validate="validateSource" />
       </div>
       <div v-else-if="sourceType === 'image'" class="form-grid">
         <label

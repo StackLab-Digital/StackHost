@@ -285,6 +285,66 @@ h2 {
 .ghost:hover {
   opacity: 0.84;
 }
+.wizard-stepper {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: -4px 0 24px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #292d35;
+}
+.wizard-stepper span {
+  color: #666d7b;
+  font-size: 12px;
+  font-weight: 600;
+}
+.wizard-stepper .active {
+  color: #e8f55b;
+}
+.wizard-stepper .done {
+  color: #b9c1ce;
+}
+.advanced-options {
+  margin-top: 18px;
+}
+.advanced-options summary {
+  cursor: pointer;
+  color: #b9c1ce;
+  font-weight: 600;
+}
+.compose-editor-shell {
+  overflow: hidden;
+  border: 1px solid #30353f;
+  border-radius: 8px;
+  background: #111317;
+}
+.compose-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #292d35;
+}
+.compose-file {
+  flex: 1;
+  color: #d7dbe3;
+  font:
+    12px "Space Mono",
+    monospace;
+}
+.compose-dropzone small {
+  display: block;
+  padding: 7px 12px;
+  color: #747c8c;
+}
+.compose-statusbar {
+  display: flex;
+  gap: 14px;
+  padding: 6px 12px;
+  border-top: 1px solid #292d35;
+  color: #747c8c;
+  font-size: 11px;
+}
 .primary:disabled,
 .secondary:disabled {
   cursor: not-allowed;
@@ -451,6 +511,17 @@ select:focus {
 }
 .modal-body {
   padding: 22px 24px;
+}
+.modal:has(.wizard-stepper) {
+  width: min(100%, 1040px);
+  max-height: 90dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal:has(.wizard-stepper) .modal-body {
+  min-height: 0;
+  overflow: auto;
 }
 .icon-button {
   display: grid;
@@ -1160,5 +1231,12 @@ dd {
   .activity-list article {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .wizard-stepper {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .wizard-stepper span:not(.active) {
+    display: none;
   }
 }

@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import BaseModal from "../components/ui/BaseModal.vue";
+import ComposeCodeEditor from "../components/applications/ComposeCodeEditor.vue";
 import { api, RequestError } from "../composables/useApi";
 import { useToast } from "../composables/useToast";
 import type { Application, Project } from "../types";
@@ -15,23 +16,40 @@ const loading = ref(true);
 const error = ref("");
 const projectModal = ref(false);
 const appModal = ref(false);
+const wizardDiscardOpen = ref(false);
 const deleteApp = ref<Application | null>(null);
 const saving = ref(false);
 const fieldErrors = ref<Record<string, string>>({});
 const editProject = ref({ name: "", description: "" });
 const editApp = ref({ id: 0, name: "" });
-const newApp = ref({ name: "", source_type: "" });
+const newApp = ref({
+  name: "",
+  description: "",
+  docker_stack_name: "",
+  source_type: "",
+});
 const appStep = ref(1);
 const newSource = ref({
   compose_yaml: "",
   image: "",
-  container_port: 0,
+  container_port: "",
   replicas: 1,
   repository_url: "",
   branch: "main",
   dockerfile_path: "Dockerfile",
   build_context: ".",
+  template_slug: "",
+  template_version: "",
 });
+const catalogTemplates = ref<
+  Array<{
+    slug: string;
+    name: string;
+    description: string;
+    version: string;
+    source: string;
+  }>
+>([]);
 const sources = [
   {
     value: "catalog",
@@ -89,20 +107,43 @@ function openApp(app: Application) {
 }
 function openCreateApp() {
   editApp.value = { id: 0, name: "" };
-  newApp.value = { name: "", source_type: "" };
+  newApp.value = {
+    name: "",
+    description: "",
+    docker_stack_name: "",
+    source_type: "",
+  };
   newSource.value = {
     compose_yaml: "",
     image: "",
-    container_port: 0,
+    container_port: "",
     replicas: 1,
     repository_url: "",
     branch: "main",
     dockerfile_path: "Dockerfile",
     build_context: ".",
+    template_slug: "",
+    template_version: "",
   };
   appStep.value = 1;
   fieldErrors.value = {};
   appModal.value = true;
+}
+function closeWizard() {
+  const dirty = Boolean(
+    newApp.value.name ||
+    newApp.value.description ||
+    newApp.value.source_type ||
+    newSource.value.compose_yaml ||
+    newSource.value.image ||
+    newSource.value.repository_url,
+  );
+  if (dirty) wizardDiscardOpen.value = true;
+  else appModal.value = false;
+}
+function discardWizard() {
+  wizardDiscardOpen.value = false;
+  appModal.value = false;
 }
 function nextAppStep() {
   if (appStep.value === 1 && !newApp.value.name.trim()) {
@@ -110,6 +151,31 @@ function nextAppStep() {
     return;
   }
   if (appStep.value === 2 && !newApp.value.source_type) return;
+  if (
+    appStep.value === 2 &&
+    newApp.value.source_type === "catalog" &&
+    !catalogTemplates.value.length
+  ) {
+    api<typeof catalogTemplates.value>("/api/v1/catalog").then((items) => {
+      catalogTemplates.value = items;
+    });
+  }
+  if (
+    appStep.value === 3 &&
+    newApp.value.source_type === "compose" &&
+    !newSource.value.compose_yaml.includes("services:")
+  ) {
+    fieldErrors.value = {
+      source: "Inclua uma seção services válida no Compose.",
+    };
+    return;
+  }
+  if (
+    appStep.value === 3 &&
+    newApp.value.source_type === "catalog" &&
+    !newSource.value.template_slug
+  )
+    return;
   appStep.value += 1;
 }
 async function readComposeFile(event: Event) {
@@ -135,24 +201,36 @@ async function saveProject() {
     saving.value = false;
   }
 }
-async function createApp() {
+async function createApp(saveAsDraft = false) {
   saving.value = true;
   fieldErrors.value = {};
   try {
-    await api(`/api/v1/projects/${route.params.id}/applications`, {
-      method: "POST",
-      body: JSON.stringify({
-        ...newApp.value,
-        description: "",
-        source: newSource.value,
-        save_as_draft: true,
-      }),
-    });
+    const created = await api<{ id: number }>(
+      `/api/v1/projects/${route.params.id}/applications`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...newApp.value,
+          description: newApp.value.description,
+          docker_stack_name: newApp.value.docker_stack_name,
+          source: newSource.value,
+          save_as_draft: saveAsDraft,
+        }),
+      },
+    );
     appModal.value = false;
-    newApp.value = { name: "", source_type: "" };
+    newApp.value = {
+      name: "",
+      description: "",
+      docker_stack_name: "",
+      source_type: "",
+    };
     appStep.value = 1;
     toast.success("Aplicação adicionada.");
     await load();
+    router.push(
+      `/projects/${route.params.id}/applications/${created.id}?tab=source`,
+    );
   } catch (err) {
     if (err instanceof RequestError) {
       fieldErrors.value = err.fields || {};
@@ -345,10 +423,24 @@ onMounted(load);
   <BaseModal
     :open="appModal"
     :title="editApp.id ? 'Editar aplicação' : 'Nova aplicação'"
-    description="A aplicação será criada agora; a publicação será configurada depois."
-    @close="appModal = false"
+    description="Defina a origem e revise a configuração antes de criar."
+    @close="closeWizard"
   >
     <form v-if="!editApp.id" id="new-app-form" @submit.prevent="createApp">
+      <nav class="wizard-stepper" aria-label="Progresso da criação">
+        <span
+          v-for="(label, index) in [
+            'Identificação',
+            'Origem',
+            'Configuração',
+            'Revisão',
+          ]"
+          :key="label"
+          :class="{ active: appStep === index + 1, done: appStep > index + 1 }"
+          :aria-current="appStep === index + 1 ? 'step' : undefined"
+          >{{ index + 1 }}. {{ label }}</span
+        >
+      </nav>
       <p class="kicker">ETAPA {{ appStep }} DE 4</p>
       <div v-if="appStep === 1">
         <h2>Identifique a aplicação</h2>
@@ -362,6 +454,25 @@ onMounted(load);
             fieldErrors.name
           }}</small></label
         >
+        <label
+          >Descrição<textarea
+            v-model="newApp.description"
+            maxlength="2000"
+            placeholder="Opcional"
+          />
+        </label>
+        <details class="advanced-options">
+          <summary>Opções avançadas</summary>
+          <label
+            >Nome da stack<input
+              v-model="newApp.docker_stack_name"
+              placeholder="projeto-aplicacao"
+            /><small class="muted"
+              >Usado futuramente para identificar a stack no Docker
+              Swarm.</small
+            ></label
+          >
+        </details>
         <p class="muted">
           Slug:
           {{
@@ -391,19 +502,13 @@ onMounted(load);
           Configure
           {{ sources.find((item) => item.value === newApp.source_type)?.label }}
         </h2>
-        <label v-if="newApp.source_type === 'compose'"
-          >Docker Compose<textarea
-            v-model="newSource.compose_yaml"
-            class="code-editor"
-            spellcheck="false"
-            placeholder="services:\n  web:\n    image: nginx:1.27-alpine"
-          />
-          <input
-            type="file"
-            accept=".yml,.yaml,text/yaml"
-            @change="readComposeFile"
-          />
-        </label>
+        <div v-if="newApp.source_type === 'compose'">
+          <h3>Docker Compose</h3>
+          <ComposeCodeEditor v-model="newSource.compose_yaml" />
+          <small v-if="fieldErrors.source" class="error-field">{{
+            fieldErrors.source
+          }}</small>
+        </div>
         <div v-else-if="newApp.source_type === 'image'" class="form-grid">
           <label
             >Imagem Docker<input
@@ -412,9 +517,9 @@ onMounted(load);
               placeholder="nginx:1.27-alpine" /></label
           ><label
             >Porta interna<input
-              v-model.number="newSource.container_port"
+              v-model="newSource.container_port"
               type="number"
-              min="0"
+              min="1"
               max="65535" /></label
           ><label
             >Réplicas<input
@@ -432,6 +537,25 @@ onMounted(load);
           ><label>Branch<input v-model="newSource.branch" /></label
           ><label>Dockerfile<input v-model="newSource.dockerfile_path" /></label
           ><label>Contexto<input v-model="newSource.build_context" /></label>
+        </div>
+        <div v-else-if="newApp.source_type === 'catalog'" class="source-grid">
+          <button
+            v-for="template in catalogTemplates"
+            :key="template.slug"
+            type="button"
+            class="source-option"
+            :class="{ selected: newSource.template_slug === template.slug }"
+            @click="
+              newSource.template_slug = template.slug;
+              newSource.template_version = template.version;
+            "
+          >
+            <strong>{{ template.name }} · {{ template.version }}</strong
+            ><small>{{ template.description }}</small>
+          </button>
+          <small v-if="!newSource.template_slug" class="error-field"
+            >Selecione um template para continuar.</small
+          >
         </div>
         <p v-else class="muted">
           O template oficial Nginx poderá ser selecionado na tela de catálogo.
@@ -460,7 +584,7 @@ onMounted(load);
         class="secondary"
         type="button"
         :disabled="saving"
-        @click="appModal = false"
+        @click="closeWizard"
       >
         Cancelar</button
       ><button
@@ -478,7 +602,19 @@ onMounted(load);
         :disabled="saving || (appStep === 2 && !newApp.source_type)"
         @click="nextAppStep"
       >
-        Continuar</button
+        {{
+          appStep === 3 && newApp.source_type === "compose"
+            ? "Validar e continuar"
+            : "Continuar"
+        }}</button
+      ><button
+        v-if="!editApp.id && appStep === 4"
+        class="secondary"
+        type="button"
+        :disabled="saving"
+        @click="createApp(true)"
+      >
+        Salvar como rascunho</button
       ><button
         v-if="!editApp.id && appStep === 4"
         class="primary"
@@ -488,7 +624,7 @@ onMounted(load);
       >
         {{ saving ? "Criando…" : "Criar aplicação" }}</button
       ><button
-        v-else
+        v-if="editApp.id"
         class="primary"
         form="edit-app-form"
         type="submit"
@@ -497,6 +633,25 @@ onMounted(load);
         {{ saving ? "Salvando…" : "Salvar alterações" }}
       </button></template
     >
+  </BaseModal>
+  <BaseModal
+    :open="wizardDiscardOpen"
+    title="Descartar configuração?"
+    description="Os dados preenchidos nesta aplicação serão perdidos."
+    @close="wizardDiscardOpen = false"
+  >
+    <template #footer>
+      <button
+        class="secondary"
+        type="button"
+        @click="wizardDiscardOpen = false"
+      >
+        Continuar editando
+      </button>
+      <button class="danger" type="button" @click="discardWizard">
+        Descartar
+      </button>
+    </template>
   </BaseModal>
   <BaseModal
     :open="!!deleteApp"
