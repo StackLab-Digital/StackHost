@@ -165,31 +165,7 @@ function openApp(app: Application) {
   router.push(`/projects/${route.params.id}/applications/${app.id}`);
 }
 function openCreateApp() {
-  editApp.value = { id: 0, name: "" };
-  newApp.value = {
-    name: "",
-    description: "",
-    docker_stack_name: "",
-    source_type: "",
-  };
-  newSource.value = {
-    compose_yaml: "",
-    image: "",
-    container_port: null,
-    replicas: 1,
-    repository_url: "",
-    branch: "main",
-    dockerfile_path: "Dockerfile",
-    build_context: ".",
-    command: "",
-    entrypoint: "",
-    environment: [],
-    template_slug: "",
-    template_version: "",
-  };
-  appStep.value = 1;
-  fieldErrors.value = {};
-  appModal.value = true;
+  router.push(`/projects/${route.params.id}/applications/new`);
 }
 function closeWizard() {
   const dirty = Boolean(
@@ -532,6 +508,7 @@ onMounted(load);
     >
   </BaseModal>
   <ApplicationWizard
+    v-if="false"
     :open="appModal"
     :editing="Boolean(editApp.id)"
     :step="appStep"
@@ -622,9 +599,9 @@ onMounted(load);
           </div>
           <SourceValidationPanel
             v-if="validationPreview"
-            :valid="validationPreview.valid"
-            :errors="validationPreview.errors"
-            :warnings="validationPreview.warnings"
+            :valid="validationPreview?.valid || false"
+            :errors="validationPreview?.errors"
+            :warnings="validationPreview?.warnings"
           />
           <small v-if="fieldErrors.source" class="error-field">{{
             fieldErrors.source
@@ -757,10 +734,10 @@ onMounted(load);
             >Selecione um template para continuar.</small
           >
           <div v-if="selectedCatalog" class="source-preview full-width">
-            <span>Template</span><strong>{{ selectedCatalog.name }}</strong>
-            <span>Versão</span><strong>{{ selectedCatalog.version }}</strong>
+            <span>Template</span><strong>{{ selectedCatalog?.name }}</strong>
+            <span>Versão</span><strong>{{ selectedCatalog?.version }}</strong>
             <span>Categoria</span
-            ><strong>{{ selectedCatalog.category }}</strong>
+            ><strong>{{ selectedCatalog?.category }}</strong>
           </div>
         </div>
         <p v-else class="muted">
@@ -814,6 +791,20 @@ onMounted(load);
       <p class="muted">Edite a configuração da origem na tela da aplicação.</p>
     </form></template>
   </ApplicationWizard>
+  <BaseModal
+    :open="appModal && Boolean(editApp.id)"
+    title="Editar aplicação"
+    description="Atualize o nome desta aplicação."
+    @close="appModal = false"
+  >
+    <form id="edit-app-form-short" @submit.prevent="saveApp">
+      <label>Nome<input v-model="editApp.name" required autofocus /></label>
+    </form>
+    <template #footer>
+      <button class="secondary" type="button" @click="appModal = false">Cancelar</button>
+      <button class="primary" form="edit-app-form-short" type="submit" :disabled="saving">{{ saving ? "Salvando…" : "Salvar alterações" }}</button>
+    </template>
+  </BaseModal>
   <BaseModal
     :open="wizardDiscardOpen"
     title="Descartar configuração?"

@@ -1,10 +1,7 @@
 <script setup lang="ts">
-import BaseModal from "../ui/BaseModal.vue";
 import WizardStepper from "./WizardStepper.vue";
 
 defineProps<{
-  open: boolean;
-  editing?: boolean;
   step: number;
   busy?: boolean;
   validating?: boolean;
@@ -17,41 +14,39 @@ const emit = defineEmits<{
   next: [];
   draft: [];
   create: [];
-  save: [];
 }>();
 </script>
 
 <template>
-  <BaseModal
-    :open="open"
-    :title="editing ? 'Editar aplicação' : 'Nova aplicação'"
-    description="Defina a origem e revise a configuração antes de criar."
-    @close="emit('close')"
-  >
-    <div v-if="!editing">
+  <main class="application-wizard-page">
+    <header class="application-wizard-head">
+      <div>
+        <p class="kicker">NOVA APLICAÇÃO</p>
+        <h1>Nova aplicação</h1>
+        <p class="muted">Defina a origem e revise a configuração antes de criar.</p>
+      </div>
+      <button class="secondary wizard-back" type="button" @click="emit('close')">
+        ← Voltar ao projeto
+      </button>
+    </header>
+    <div class="application-wizard-nav">
       <WizardStepper :step="step" />
-      <slot />
     </div>
-    <slot v-else name="edit" />
-    <template #footer>
-      <button class="secondary" type="button" :disabled="busy" @click="emit('close')">
-        Cancelar
-      </button>
-      <button v-if="!editing && step > 1" class="secondary" type="button" :disabled="busy" @click="emit('back')">
-        Voltar
-      </button>
-      <button v-if="!editing && step < 4" class="primary" type="button" :disabled="busy || validating || canContinue === false" @click="emit('next')">
-        {{ validating ? "Validando…" : step === 3 && sourceType === "compose" ? "Validar e continuar" : "Continuar" }}
-      </button>
-      <button v-if="!editing && step === 4" class="secondary" type="button" :disabled="busy" @click="emit('draft')">
-        Salvar como rascunho
-      </button>
-      <button v-if="!editing && step === 4" class="primary" form="new-app-form" type="submit" :disabled="busy">
-        {{ busy ? "Criando…" : "Criar aplicação" }}
-      </button>
-      <button v-if="editing" class="primary" type="button" :disabled="busy" @click="emit('save')">
-        {{ busy ? "Salvando…" : "Salvar alterações" }}
-      </button>
-    </template>
-  </BaseModal>
+    <section class="application-wizard-body">
+      <slot />
+    </section>
+    <footer class="application-wizard-foot">
+      <button v-if="step > 1" class="secondary" type="button" :disabled="busy" @click="emit('back')">Voltar</button>
+      <span v-else />
+      <div class="wizard-foot-actions">
+        <button v-if="step < 4" class="primary" type="button" :disabled="busy || validating || canContinue === false" @click="emit('next')">
+          {{ validating ? "Validando…" : step === 3 && sourceType === "compose" ? "Validar e continuar" : "Continuar" }}
+        </button>
+        <template v-else>
+          <button class="secondary" type="button" :disabled="busy" @click="emit('draft')">Salvar como rascunho</button>
+          <button class="primary" type="button" :disabled="busy" @click="emit('create')">{{ busy ? "Criando…" : "Criar aplicação" }}</button>
+        </template>
+      </div>
+    </footer>
+  </main>
 </template>

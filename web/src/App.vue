@@ -79,7 +79,7 @@ onUnmounted(() => document.removeEventListener("keydown", keydown));
         ></RouterLink
       >
     </aside>
-    <main>
+    <main :class="{ 'main-wizard': route.path.endsWith('/applications/new') }">
       <header>
         <button
           class="menu"
@@ -102,7 +102,7 @@ onUnmounted(() => document.removeEventListener("keydown", keydown));
           }}</span></RouterLink
         >
       </header>
-      <section class="content"><RouterView /></section>
+      <section class="content" :class="{ 'content-wizard': route.path.endsWith('/applications/new') }"><RouterView /></section>
     </main>
     <ToastContainer />
   </div>
