@@ -125,6 +125,24 @@ func TestInfrastructureWithoutDocker(t *testing.T) {
 	}
 }
 
+func TestValidationErrorIncludesFields(t *testing.T) {
+	a := testApp(t)
+	w := httptest.NewRecorder()
+	a.setupAdmin(w, httptest.NewRequest(http.MethodPost, "/api/v1/setup/admin", strings.NewReader(`{"name":"","email":"bad","password":"short"}`)))
+	var payload struct {
+		Error struct {
+			Code   string            `json:"code"`
+			Fields map[string]string `json:"fields"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusUnprocessableEntity || payload.Error.Code != "validation_failed" || len(payload.Error.Fields) != 3 {
+		t.Fatalf("validation payload = %#v", payload)
+	}
+}
+
 func TestCleanDatabaseIntegrationFlow(t *testing.T) {
 	a := testApp(t)
 	setup := httptest.NewRecorder()
