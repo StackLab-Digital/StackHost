@@ -138,6 +138,17 @@ func (a *app) applicationRouteV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 4 {
+		if r.Method == http.MethodDelete {
+			if _, err := a.db.Exec("DELETE FROM applications WHERE id=?", id); err != nil {
+				jsonError(w, 500, "internal_error", "Não foi possível excluir a aplicação.")
+				return
+			}
+			userID, _ := r.Context().Value(userKey{}).(int64)
+			a.audit(userID, "application.deleted", "application", id)
+			a.publish("application.deleted", map[string]any{"id": id})
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		a.applicationMetadata(w, r, id)
 		return
 	}

@@ -15,6 +15,7 @@ const loading = ref(true);
 const error = ref("");
 const projectModal = ref(false);
 const appModal = ref(false);
+const deleteApp = ref<Application | null>(null);
 const saving = ref(false);
 const fieldErrors = ref<Record<string, string>>({});
 const editProject = ref({ name: "", description: "" });
@@ -183,6 +184,26 @@ async function saveApp() {
     saving.value = false;
   }
 }
+async function confirmDeleteApp() {
+  if (!deleteApp.value) return;
+  saving.value = true;
+  try {
+    await api(`/api/v1/applications/${deleteApp.value.id}`, {
+      method: "DELETE",
+    });
+    toast.success("Aplicação excluída.");
+    deleteApp.value = null;
+    await load();
+  } catch (err) {
+    toast.error(
+      err instanceof Error
+        ? err.message
+        : "Não foi possível excluir a aplicação.",
+    );
+  } finally {
+    saving.value = false;
+  }
+}
 onMounted(load);
 </script>
 
@@ -279,6 +300,9 @@ onMounted(load);
           }}</span
           ><button class="ghost" type="button" @click.stop="openAppEdit(app)">
             Editar
+          </button>
+          <button class="ghost" type="button" @click.stop="deleteApp = app">
+            Excluir
           </button>
         </article>
       </div>
@@ -473,5 +497,32 @@ onMounted(load);
         {{ saving ? "Salvando…" : "Salvar alterações" }}
       </button></template
     >
+  </BaseModal>
+  <BaseModal
+    :open="!!deleteApp"
+    title="Excluir aplicação"
+    :description="`A aplicação ${deleteApp?.name || ''} e sua configuração serão removidas permanentemente.`"
+    :busy="saving"
+    @close="deleteApp = null"
+  >
+    <p class="muted">Esta ação não pode ser desfeita.</p>
+    <template #footer>
+      <button
+        class="secondary"
+        type="button"
+        :disabled="saving"
+        @click="deleteApp = null"
+      >
+        Cancelar
+      </button>
+      <button
+        class="danger"
+        type="button"
+        :disabled="saving"
+        @click="confirmDeleteApp"
+      >
+        {{ saving ? "Excluindo…" : "Excluir aplicação" }}
+      </button>
+    </template>
   </BaseModal>
 </template>
