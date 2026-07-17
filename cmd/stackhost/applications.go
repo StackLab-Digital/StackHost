@@ -302,16 +302,55 @@ func (a *app) applicationRuntime(w http.ResponseWriter, r *http.Request, id int6
 	status := "not_deployed"
 	if mode == "swarm" {
 		cmd := exec.CommandContext(r.Context(), "docker", "service", "ls", "--filter", "label=com.docker.stack.namespace="+stackName, "--format", "{{json .}}")
-		if output, err := cmd.Output(); err == nil && strings.TrimSpace(string(output)) != "" {
-			status = "running"
+		if output, err := cmd.Output(); err == nil {
+			for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+				var item struct{ Name, Image, Replicas string }
+				if json.Unmarshal([]byte(line), &item) == nil && item.Name != "" {
+					desired, running := splitReplicas(item.Replicas)
+					services = append(services, map[string]any{"name": item.Name, "image": item.Image, "desired": desired, "running": running, "failed": 0})
+				}
+			}
+			if len(services) > 0 {
+				status = "running"
+			}
 		}
 	} else {
 		cmd := exec.CommandContext(r.Context(), "docker", "compose", "--project-name", stackName, "ps", "--format", "json")
-		if output, err := cmd.Output(); err == nil && strings.TrimSpace(string(output)) != "" {
-			status = "running"
+		if output, err := cmd.Output(); err == nil {
+			var items []struct{ Service, Image, State string }
+			if json.Unmarshal(output, &items) != nil {
+				for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+					var item struct{ Service, Image, State string }
+					if json.Unmarshal([]byte(line), &item) == nil {
+						items = append(items, item)
+					}
+				}
+			}
+			for _, item := range items {
+				services = append(services, map[string]any{"name": item.Service, "image": item.Image, "desired": 1, "running": boolInt(strings.EqualFold(item.State, "running")), "failed": boolInt(!strings.EqualFold(item.State, "running"))})
+			}
+			if len(services) > 0 {
+				status = "running"
+			}
 		}
 	}
 	json.NewEncoder(w).Encode(map[string]any{"mode": mode, "status": status, "services": services, "name": name, "project": stackName})
+}
+
+func splitReplicas(value string) (int, int) {
+	parts := strings.SplitN(value, "/", 2)
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	desired, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
+	running, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
+	return desired, running
+}
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func (a *app) applicationMetadata(w http.ResponseWriter, r *http.Request, id int64) {

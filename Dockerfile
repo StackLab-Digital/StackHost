@@ -14,6 +14,7 @@ COPY . .
 RUN CGO_ENABLED=1 go build -o /out/stackhost ./cmd/stackhost
 
 FROM alpine:3.20
+RUN apk add --no-cache docker-cli docker-cli-compose ca-certificates
 RUN addgroup -S stackhost && adduser -S -G stackhost stackhost
 WORKDIR /app
 COPY --from=build /out/stackhost .
