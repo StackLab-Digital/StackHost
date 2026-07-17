@@ -214,6 +214,8 @@ async function validateSource() {
   }
 }
 async function publishApplication() {
+  const mode = runtime.value?.mode === "swarm" ? "Docker Swarm" : "Docker em servidor único";
+  if (!window.confirm(`Publicar aplicação?\n\nModo: ${mode}\nProjeto: ${application.value?.slug || application.value?.name || "aplicação"}`)) return;
   publishing.value = true;
   try { await api(`/api/v1/applications/${route.params.applicationId}/deploy`, { method: "POST" }); toast.success("Aplicação publicada."); await load(); }
   catch (err) { toast.error(err instanceof Error ? err.message : "Não foi possível publicar a aplicação."); }

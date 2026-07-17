@@ -720,13 +720,13 @@ func (a *app) infrastructure(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) environmentSettings(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value(userKey{}).(int64)
-	var role string
-	if a.db.QueryRow("SELECT role FROM users WHERE id=?", userID).Scan(&role) != nil || role != "admin" {
-		jsonError(w, http.StatusForbidden, "forbidden", "Apenas administradores podem alterar o modo de execução.")
-		return
-	}
 	if r.Method == http.MethodPatch {
+		userID, _ := r.Context().Value(userKey{}).(int64)
+		var role string
+		if a.db.QueryRow("SELECT role FROM users WHERE id=?", userID).Scan(&role) != nil || role != "admin" {
+			jsonError(w, http.StatusForbidden, "forbidden", "Apenas administradores podem alterar o modo de execução.")
+			return
+		}
 		var input struct {
 			RuntimeMode string `json:"runtime_mode"`
 		}
