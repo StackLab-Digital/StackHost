@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -174,6 +177,14 @@ func (a *app) applicationRouteV2(w http.ResponseWriter, r *http.Request) {
 		a.applicationSource(w, r, id)
 		return
 	}
+	if len(parts) == 5 && (parts[4] == "deploy" || parts[4] == "runtime") {
+		if parts[4] == "deploy" {
+			a.deployCompose(w, r, id)
+		} else {
+			a.applicationRuntime(w, r, id)
+		}
+		return
+	}
 	if len(parts) == 6 && parts[4] == "source" {
 		switch parts[5] {
 		case "validate":
@@ -186,6 +197,100 @@ func (a *app) applicationRouteV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonError(w, 404, "not_found", "Rota não encontrada.")
+}
+
+func (a *app) deployCompose(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		jsonError(w, 405, "method_not_allowed", "Método não permitido.")
+		return
+	}
+	a.deployMu.Lock()
+	defer a.deployMu.Unlock()
+	var sourceType, stackName string
+	var encrypted, nonce []byte
+	if err := a.db.QueryRow("SELECT source_type,coalesce(docker_stack_name,''),encrypted_payload,encryption_nonce FROM application_sources JOIN applications ON applications.id=application_sources.application_id WHERE application_id=?", id).Scan(&sourceType, &stackName, &encrypted, &nonce); err != nil || sourceType != "compose" {
+		jsonError(w, 422, "compose_required", "Configure uma origem Docker Compose antes de publicar.")
+		return
+	}
+	plain, err := a.cipher.Decrypt(encrypted, nonce)
+	if err != nil {
+		jsonError(w, 500, "source_unreadable", "Não foi possível ler o Compose.")
+		return
+	}
+	var input sourceInput
+	if json.Unmarshal(plain, &input) != nil {
+		jsonError(w, 500, "source_unreadable", "Não foi possível ler o Compose.")
+		return
+	}
+	result := validateSource("compose", input)
+	if !result.Valid {
+		jsonError(w, 422, "compose_invalid", "O Compose precisa ser válido antes da publicação.")
+		return
+	}
+	if stackName == "" {
+		_ = a.db.QueryRow("SELECT slug FROM applications WHERE id=?", id).Scan(&stackName)
+	}
+	if !regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`).MatchString(stackName) {
+		jsonError(w, 422, "invalid_project_name", "O nome do projeto Docker é inválido.")
+		return
+	}
+	var mode string
+	if a.db.QueryRow("SELECT runtime_mode FROM environment_settings WHERE id=1").Scan(&mode) != nil {
+		mode = "standalone"
+	}
+	tmp, err := os.CreateTemp("", "stackhost-compose-*.yml")
+	if err != nil {
+		jsonError(w, 500, "internal_error", "Não foi possível preparar o Compose.")
+		return
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	_ = tmp.Chmod(0600)
+	if _, err = tmp.WriteString(input.ComposeYAML); err != nil {
+		tmp.Close()
+		jsonError(w, 500, "internal_error", "Não foi possível preparar o Compose.")
+		return
+	}
+	tmp.Close()
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	var cmd *exec.Cmd
+	if mode == "swarm" {
+		cmd = exec.CommandContext(ctx, "docker", "stack", "deploy", "--compose-file", name, "--prune", stackName)
+	} else {
+		cmd = exec.CommandContext(ctx, "docker", "compose", "--project-name", stackName, "--file", name, "up", "--detach", "--remove-orphans")
+	}
+	cmd.Env = os.Environ()
+	for _, variable := range input.Environment {
+		if variable.Value != "" {
+			cmd.Env = append(cmd.Env, variable.Key+"="+variable.Value)
+		}
+	}
+	if output, runErr := cmd.CombinedOutput(); runErr != nil {
+		_ = output
+		jsonError(w, 502, "deploy_failed", "O Docker não conseguiu publicar a aplicação.")
+		return
+	}
+	_, _ = a.db.Exec("UPDATE applications SET status='running',updated_at=? WHERE id=?", time.Now().UTC().Format(time.RFC3339), id)
+	json.NewEncoder(w).Encode(map[string]any{"mode": mode, "status": "running", "project": stackName})
+}
+
+func (a *app) applicationRuntime(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodGet {
+		jsonError(w, 405, "method_not_allowed", "Método não permitido.")
+		return
+	}
+	var name, stackName string
+	if a.db.QueryRow("SELECT name,coalesce(docker_stack_name,''),slug FROM applications WHERE id=?", id).Scan(&name, &stackName, new(string)) != nil {
+		jsonError(w, 404, "not_found", "Aplicação não encontrada.")
+		return
+	}
+	if stackName == "" {
+		_ = a.db.QueryRow("SELECT slug FROM applications WHERE id=?", id).Scan(&stackName)
+	}
+	mode := "standalone"
+	_ = a.db.QueryRow("SELECT runtime_mode FROM environment_settings WHERE id=1").Scan(&mode)
+	json.NewEncoder(w).Encode(map[string]any{"mode": mode, "status": "not_deployed", "services": []any{}, "name": name, "project": stackName})
 }
 
 func (a *app) applicationMetadata(w http.ResponseWriter, r *http.Request, id int64) {

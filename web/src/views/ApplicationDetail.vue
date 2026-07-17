@@ -54,6 +54,7 @@ const validation = ref<Validation | null>(null);
 const loading = ref(true);
 const error = ref("");
 const saving = ref(false);
+const publishing = ref(false);
 const tab = computed(() =>
   typeof route.query.tab === "string" ? route.query.tab : "overview",
 );
@@ -209,6 +210,12 @@ async function validateSource() {
   } finally {
     saving.value = false;
   }
+}
+async function publishApplication() {
+  publishing.value = true;
+  try { await api(`/api/v1/applications/${route.params.applicationId}/deploy`, { method: "POST" }); toast.success("Aplicação publicada."); await load(); }
+  catch (err) { toast.error(err instanceof Error ? err.message : "Não foi possível publicar a aplicação."); }
+  finally { publishing.value = false; }
 }
 async function changeSource() {
   saving.value = true;
@@ -393,6 +400,7 @@ onMounted(load);
           >
             {{ saving ? "Salvando…" : "Salvar alterações" }}
           </button>
+          <button v-if="sourceType === 'compose'" class="secondary" type="button" :disabled="publishing" @click="publishApplication">{{ publishing ? "Publicando…" : "Publicar aplicação" }}</button>
         </div>
       </div>
       <div class="source-switch">

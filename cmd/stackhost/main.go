@@ -34,6 +34,7 @@ type app struct {
 	cipher        *secure.Cipher
 	loginMu       sync.Mutex
 	loginAttempts map[string]attempt
+	deployMu      sync.Mutex
 }
 type attempt struct {
 	count int
