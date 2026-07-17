@@ -87,6 +87,8 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("/api/v1/projects/", a.auth(a.projectRoute))
 	mux.HandleFunc("/api/v1/applications/", a.auth(a.applicationRoute))
 	mux.HandleFunc("/api/v1/infrastructure", a.auth(a.infrastructure))
+	mux.HandleFunc("/api/v1/infrastructure/nodes", a.auth(a.infrastructureNodes))
+	mux.HandleFunc("/api/v1/infrastructure/services", a.auth(a.infrastructureServices))
 	mux.HandleFunc("/api/v1/activity", a.auth(a.activity))
 	mux.HandleFunc("/api/v1/events", a.auth(a.eventsStream))
 	mux.HandleFunc("/", a.spa)
@@ -470,6 +472,30 @@ func (a *app) infrastructure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"docker": map[string]any{"available": false, "message": "Docker não está conectado."}, "swarm": map[string]any{"active": false, "message": "O host não está conectado a um Swarm."}, "nodes": []any{}, "services": []any{}})
+}
+func (a *app) infrastructureNodes(w http.ResponseWriter, r *http.Request) {
+	if a.docker == nil {
+		jsonError(w, 503, "docker_unavailable", "Docker não está conectado.")
+		return
+	}
+	nodes, err := a.docker.Nodes(r.Context())
+	if err != nil {
+		jsonError(w, 503, "swarm_unavailable", "Nós do Swarm indisponíveis.")
+		return
+	}
+	json.NewEncoder(w).Encode(nodes)
+}
+func (a *app) infrastructureServices(w http.ResponseWriter, r *http.Request) {
+	if a.docker == nil {
+		jsonError(w, 503, "docker_unavailable", "Docker não está conectado.")
+		return
+	}
+	services, err := a.docker.Services(r.Context())
+	if err != nil {
+		jsonError(w, 503, "swarm_unavailable", "Services do Swarm indisponíveis.")
+		return
+	}
+	json.NewEncoder(w).Encode(services)
 }
 func (a *app) spa(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {

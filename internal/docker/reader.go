@@ -29,6 +29,21 @@ type Swarm struct {
 	Workers  int    `json:"workers"`
 	Services int    `json:"services"`
 }
+type Node struct {
+	ID           string `json:"id"`
+	Hostname     string `json:"hostname"`
+	Role         string `json:"role"`
+	Availability string `json:"availability"`
+	State        string `json:"state"`
+}
+type Service struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Image    string `json:"image"`
+	Replicas uint64 `json:"replicas"`
+	Running  uint64 `json:"running"`
+	Desired  uint64 `json:"desired"`
+}
 
 func NewReader() (*Reader, error) {
 	host := os.Getenv("STACKHOST_DOCKER_HOST")
@@ -84,4 +99,39 @@ func (r *Reader) Snapshot(ctx context.Context) Snapshot {
 		out.Swarm.Services = len(services)
 	}
 	return out
+}
+func (r *Reader) Nodes(ctx context.Context) ([]Node, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	items, err := r.client.NodeList(ctx, types.NodeListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Node, 0, len(items))
+	for _, n := range items {
+		out = append(out, Node{ID: n.ID, Hostname: n.Description.Hostname, Role: string(n.Spec.Role), Availability: string(n.Spec.Availability), State: string(n.Status.State)})
+	}
+	return out, nil
+}
+func (r *Reader) Services(ctx context.Context) ([]Service, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	items, err := r.client.ServiceList(ctx, types.ServiceListOptions{Status: true})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Service, 0, len(items))
+	for _, s := range items {
+		desired, running := uint64(0), uint64(0)
+		if s.ServiceStatus != nil {
+			desired = uint64(s.ServiceStatus.DesiredTasks)
+			running = uint64(s.ServiceStatus.RunningTasks)
+		}
+		image := ""
+		if s.Spec.TaskTemplate.ContainerSpec != nil {
+			image = s.Spec.TaskTemplate.ContainerSpec.Image
+		}
+		out = append(out, Service{ID: s.ID, Name: s.Spec.Name, Image: image, Desired: desired, Running: running, Replicas: desired})
+	}
+	return out, nil
 }
