@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	dockerreader "github.com/StackLab-Digital/StackHost/internal/docker"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -23,6 +24,7 @@ type app struct {
 	db            *sql.DB
 	sessionSecret string
 	events        chan map[string]any
+	docker        *dockerreader.Reader
 }
 
 func main() {
@@ -39,7 +41,8 @@ func main() {
 	if err = migrate(db); err != nil {
 		panic(err)
 	}
-	a := &app{db: db, sessionSecret: getenv("STACKHOST_SESSION_SECRET", "development-only-change-me"), events: make(chan map[string]any, 32)}
+	dr, _ := dockerreader.NewReader()
+	a := &app{db: db, sessionSecret: getenv("STACKHOST_SESSION_SECRET", "development-only-change-me"), events: make(chan map[string]any, 32), docker: dr}
 	s := &http.Server{Addr: addr, Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -419,6 +422,10 @@ func (a *app) eventsStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (a *app) infrastructure(w http.ResponseWriter, r *http.Request) {
+	if a.docker != nil {
+		json.NewEncoder(w).Encode(a.docker.Snapshot(r.Context()))
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]any{"docker": map[string]any{"available": false, "message": "Docker não está conectado."}, "swarm": map[string]any{"active": false, "message": "O host não está conectado a um Swarm."}, "nodes": []any{}, "services": []any{}})
 }
 func (a *app) spa(w http.ResponseWriter, r *http.Request) {
