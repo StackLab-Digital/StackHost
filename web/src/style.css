@@ -469,7 +469,7 @@ h2 {
 .application-wizard-head .muted { margin: 0; }
 .application-wizard-nav { min-height: 68px; padding-top: 14px; padding-bottom: 12px; }
 .application-wizard-nav .wizard-stepper { margin: 0; border-bottom: 0; }
-.application-wizard-body { flex: 1; min-height: 0; overflow: hidden; padding: 24px 32px; }
+.application-wizard-body { flex: 1; min-height: 0; overflow: hidden; padding: 0 32px 24px; }
 .application-wizard-body--compose { padding-top: 0; }
 .wizard-step-content { width: 100%; height: 100%; min-height: 0; overflow: auto; max-width: 1280px; margin: 0 auto; }
 .wizard-step-content--compose { display: flex; flex-direction: column; overflow: hidden; max-width: none; }
