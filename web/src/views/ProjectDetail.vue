@@ -47,6 +47,8 @@ const newSource = ref({
   branch: "main",
   dockerfile_path: "Dockerfile",
   build_context: ".",
+  command: "",
+  entrypoint: "",
   template_slug: "",
   template_version: "",
 });
@@ -145,6 +147,8 @@ function openCreateApp() {
     branch: "main",
     dockerfile_path: "Dockerfile",
     build_context: ".",
+    command: "",
+    entrypoint: "",
     template_slug: "",
     template_version: "",
   };
@@ -555,34 +559,96 @@ onMounted(load);
             fieldErrors.source
           }}</small>
         </div>
-        <div v-else-if="newApp.source_type === 'image'" class="form-grid">
+        <div
+          v-else-if="newApp.source_type === 'image'"
+          class="source-form-stack"
+        >
           <label
             >Imagem Docker<input
               v-model="newSource.image"
               required
               placeholder="nginx:1.27-alpine" /></label
+          ><small class="muted"
+            >Imagem que será utilizada para iniciar a aplicação.</small
           ><label
             >Porta interna<input
               v-model="newSource.container_port"
               type="number"
               min="1"
+              placeholder="Ex.: 80"
               max="65535" /></label
           ><label
-            >Réplicas<input
-              v-model.number="newSource.replicas"
-              type="number"
-              min="1"
-          /></label>
+            >Réplicas
+            <div class="stepper-control">
+              <button
+                type="button"
+                aria-label="Diminuir réplicas"
+                @click="
+                  newSource.replicas = Math.max(1, newSource.replicas - 1)
+                "
+              >
+                −</button
+              ><output>{{ newSource.replicas }}</output
+              ><button
+                type="button"
+                aria-label="Aumentar réplicas"
+                @click="
+                  newSource.replicas = Math.min(20, newSource.replicas + 1)
+                "
+              >
+                +
+              </button>
+            </div>
+            <small class="muted"
+              >Quantidade de instâncias mantidas em execução.</small
+            ></label
+          >
+          <details class="advanced-options">
+            <summary>Opções avançadas</summary>
+            <label
+              >Command<input
+                v-model="newSource.command"
+                placeholder="Opcional" /></label
+            ><label
+              >Entrypoint<input
+                v-model="newSource.entrypoint"
+                placeholder="Opcional"
+            /></label>
+          </details>
         </div>
-        <div v-else-if="newApp.source_type === 'git'" class="form-grid">
+        <div v-else-if="newApp.source_type === 'git'" class="source-form-stack">
           <label
             >URL do repositório<input
               v-model="newSource.repository_url"
               required
-              placeholder="https://github.com/org/repo.git" /></label
-          ><label>Branch<input v-model="newSource.branch" /></label
-          ><label>Dockerfile<input v-model="newSource.dockerfile_path" /></label
-          ><label>Contexto<input v-model="newSource.build_context" /></label>
+              placeholder="https://github.com/empresa/aplicacao.git"
+            /><small class="muted"
+              >Aceitamos HTTPS ou SSH. Tokens embutidos na URL não são
+              permitidos.</small
+            ></label
+          >
+          <div class="form-grid">
+            <label>Branch<input v-model="newSource.branch" /></label
+            ><label
+              >Dockerfile<input v-model="newSource.dockerfile_path" /><small
+                class="muted"
+                >Caminho relativo à raiz do repositório.</small
+              ></label
+            ><label
+              >Contexto<input v-model="newSource.build_context" /><small
+                class="muted"
+                >Diretório enviado ao processo de build.</small
+              ></label
+            >
+          </div>
+          <div class="source-preview">
+            <span>Repositório</span
+            ><strong>{{ newSource.repository_url || "org/repo" }}</strong
+            ><span>Build</span
+            ><strong>./{{ newSource.dockerfile_path || "Dockerfile" }}</strong
+            ><span>Branch</span
+            ><strong>{{ newSource.branch || "main" }}</strong>
+          </div>
         </div>
         <div v-else-if="newApp.source_type === 'catalog'" class="source-grid">
           <button
