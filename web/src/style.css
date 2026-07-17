@@ -475,7 +475,7 @@ h2 {
 .application-wizard-foot { display: flex; align-items: center; justify-content: space-between; border-top: 0; border-bottom: 0; }
 .wizard-foot-actions { display: flex; gap: 10px; }
 .compose-step, .compose-workspace, .compose-editor-shell { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.compose-step-header { flex: 0 0 auto; margin-bottom: 12px; }
+.compose-step-header { flex: 0 0 auto; margin: 0 0 12px; padding: 0; border: 0; }
 .compose-step-header h2 { margin: 0; }
 .compose-step-header p { margin: 4px 0 0; }
 .compose-workspace { width: 100%; }
@@ -493,7 +493,7 @@ h2 {
 .editor-menu-content button { padding: 8px; border: 0; background: transparent; color: inherit; text-align: left; }
 .compose-validation-status { display: inline-flex; align-items: center; gap: 4px; color: #aeb4c0; font-size: 12px; }
 .compose-statusbar { flex: 0 0 28px; min-height: 28px; display: flex; justify-content: space-between; align-items: center; padding: 0 10px; color: #aeb4c0; font-size: 11px; }
-.application-wizard-page .compose-editor { height: 100%; min-height: 0; }
+.application-wizard-page .compose-editor { height: 100%; min-height: calc(17 * 1.5em + 32px); }
 .application-wizard-page .cm-editor { height: 100% !important; }
 .wizard-confirm { position: fixed; z-index: 20; right: 24px; bottom: 24px; width: min(420px, calc(100vw - 32px)); padding: 18px; border: 1px solid #59621d; border-radius: 12px; background: #1b1e24; box-shadow: 0 18px 50px #0008; }
 .wizard-confirm p { color: #aeb4c0; }
