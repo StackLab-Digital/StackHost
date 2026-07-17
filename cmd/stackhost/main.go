@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +22,7 @@ import (
 type app struct {
 	db            *sql.DB
 	sessionSecret string
+	events        chan map[string]any
 }
 
 func main() {
@@ -37,7 +39,7 @@ func main() {
 	if err = migrate(db); err != nil {
 		panic(err)
 	}
-	a := &app{db: db, sessionSecret: getenv("STACKHOST_SESSION_SECRET", "development-only-change-me")}
+	a := &app{db: db, sessionSecret: getenv("STACKHOST_SESSION_SECRET", "development-only-change-me"), events: make(chan map[string]any, 32)}
 	s := &http.Server{Addr: addr, Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -76,7 +78,10 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("/api/v1/me", a.auth(a.me))
 	mux.HandleFunc("/api/v1/dashboard", a.auth(a.dashboard))
 	mux.HandleFunc("/api/v1/projects", a.auth(a.projects))
+	mux.HandleFunc("/api/v1/projects/", a.auth(a.projectRoute))
+	mux.HandleFunc("/api/v1/applications/", a.auth(a.applicationRoute))
 	mux.HandleFunc("/api/v1/infrastructure", a.auth(a.infrastructure))
+	mux.HandleFunc("/api/v1/events", a.auth(a.eventsStream))
 	mux.HandleFunc("/", a.spa)
 	return security(mux)
 }
@@ -241,7 +246,177 @@ func (a *app) projects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
+	a.publish("project.created", map[string]any{"id": id, "name": in.Name})
 	json.NewEncoder(w).Encode(map[string]any{"id": id, "name": in.Name, "slug": in.Slug, "status": "active"})
+}
+
+func (a *app) projectRoute(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		jsonError(w, 404, "not_found", "Projeto não encontrado.")
+		return
+	}
+	id, err := strconv.ParseInt(parts[3], 10, 64)
+	if err != nil {
+		jsonError(w, 404, "not_found", "Projeto não encontrado.")
+		return
+	}
+	if len(parts) == 5 && parts[4] == "applications" {
+		a.applications(w, r, id)
+		return
+	}
+	if len(parts) != 4 {
+		jsonError(w, 404, "not_found", "Recurso não encontrado.")
+		return
+	}
+	if r.Method == "GET" {
+		var name, slug, desc, status, created, updated string
+		if a.db.QueryRow("SELECT name,slug,coalesce(description,''),status,created_at,updated_at FROM projects WHERE id=?", id).Scan(&name, &slug, &desc, &status, &created, &updated) != nil {
+			jsonError(w, 404, "not_found", "Projeto não encontrado.")
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"id": id, "name": name, "slug": slug, "description": desc, "status": status, "created_at": created, "updated_at": updated})
+		return
+	}
+	if r.Method != "PATCH" {
+		jsonError(w, 405, "method_not_allowed", "Método não permitido.")
+		return
+	}
+	var in struct{ Name, Description, Status string }
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		jsonError(w, 422, "validation_failed", "Revise os campos informados.")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := a.db.Exec("UPDATE projects SET name=COALESCE(NULLIF(?,''),name), description=COALESCE(?,description), status=COALESCE(NULLIF(?,''),status), updated_at=? WHERE id=?", in.Name, in.Description, in.Status, now, id); err != nil {
+		jsonError(w, 500, "internal_error", "Não foi possível atualizar o projeto.")
+		return
+	}
+	a.publish("project.updated", map[string]any{"id": id})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *app) applications(w http.ResponseWriter, r *http.Request, projectID int64) {
+	if r.Method == "GET" {
+		rows, err := a.db.Query("SELECT id,name,slug,source_type,coalesce(docker_stack_name,''),status,created_at,updated_at FROM applications WHERE project_id=? ORDER BY id DESC", projectID)
+		if err != nil {
+			jsonError(w, 500, "internal_error", "Não foi possível listar aplicações.")
+			return
+		}
+		defer rows.Close()
+		out := []any{}
+		for rows.Next() {
+			var id int
+			var name, slug, source, stack, status, created, updated string
+			rows.Scan(&id, &name, &slug, &source, &stack, &status, &created, &updated)
+			out = append(out, map[string]any{"id": id, "project_id": projectID, "name": name, "slug": slug, "source_type": source, "docker_stack_name": stack, "status": status, "created_at": created, "updated_at": updated})
+		}
+		json.NewEncoder(w).Encode(out)
+		return
+	}
+	if r.Method != "POST" {
+		jsonError(w, 405, "method_not_allowed", "Método não permitido.")
+		return
+	}
+	var in struct{ Name, Slug, SourceType, DockerStackName string }
+	if json.NewDecoder(r.Body).Decode(&in) != nil || strings.TrimSpace(in.Name) == "" {
+		jsonError(w, 422, "validation_failed", "O nome é obrigatório.")
+		return
+	}
+	if in.SourceType == "" {
+		in.SourceType = "compose"
+	}
+	valid := map[string]bool{"catalog": true, "compose": true, "image": true, "git": true}
+	if !valid[in.SourceType] {
+		jsonError(w, 422, "validation_failed", "Tipo de origem inválido.")
+		return
+	}
+	if in.Slug == "" {
+		in.Slug = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(in.Name), " ", "-"))
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := a.db.Exec("INSERT INTO applications(project_id,name,slug,source_type,docker_stack_name,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", projectID, in.Name, in.Slug, in.SourceType, in.DockerStackName, "unknown", now, now)
+	if err != nil {
+		jsonError(w, 409, "already_exists", "Não foi possível criar a aplicação.")
+		return
+	}
+	id, _ := res.LastInsertId()
+	a.publish("application.created", map[string]any{"id": id, "project_id": projectID})
+	json.NewEncoder(w).Encode(map[string]any{"id": id, "project_id": projectID, "name": in.Name, "slug": in.Slug, "source_type": in.SourceType, "status": "unknown"})
+}
+
+func (a *app) applicationRoute(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) != 4 {
+		jsonError(w, 404, "not_found", "Aplicação não encontrada.")
+		return
+	}
+	id, err := strconv.ParseInt(parts[3], 10, 64)
+	if err != nil {
+		jsonError(w, 404, "not_found", "Aplicação não encontrada.")
+		return
+	}
+	if r.Method == "GET" {
+		var project int
+		var name, slug, source, stack, status, created, updated string
+		if a.db.QueryRow("SELECT project_id,name,slug,source_type,coalesce(docker_stack_name,''),status,created_at,updated_at FROM applications WHERE id=?", id).Scan(&project, &name, &slug, &source, &stack, &status, &created, &updated) != nil {
+			jsonError(w, 404, "not_found", "Aplicação não encontrada.")
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"id": id, "project_id": project, "name": name, "slug": slug, "source_type": source, "docker_stack_name": stack, "status": status, "created_at": created, "updated_at": updated})
+		return
+	}
+	if r.Method != "PATCH" {
+		jsonError(w, 405, "method_not_allowed", "Método não permitido.")
+		return
+	}
+	var in struct{ Name, Status, DockerStackName string }
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		jsonError(w, 422, "validation_failed", "Revise os campos informados.")
+		return
+	}
+	_, err = a.db.Exec("UPDATE applications SET name=COALESCE(NULLIF(?,''),name), status=COALESCE(NULLIF(?,''),status), docker_stack_name=COALESCE(?,docker_stack_name), updated_at=? WHERE id=?", in.Name, in.Status, in.DockerStackName, time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		jsonError(w, 500, "internal_error", "Não foi possível atualizar a aplicação.")
+		return
+	}
+	a.publish("application.updated", map[string]any{"id": id})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *app) publish(event string, data map[string]any) {
+	payload := map[string]any{"event": event, "data": data, "at": time.Now().UTC().Format(time.RFC3339)}
+	select {
+	case a.events <- payload:
+	default:
+	}
+}
+func (a *app) eventsStream(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return
+	}
+	b, _ := json.Marshal(map[string]any{"event": "connected"})
+	fmt.Fprintf(w, "data: %s\n\n", b)
+	flusher.Flush()
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case event := <-a.events:
+			b, _ := json.Marshal(event)
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			flusher.Flush()
+		case <-ticker.C:
+			fmt.Fprint(w, "event: heartbeat\ndata: {}\n\n")
+			flusher.Flush()
+		}
+	}
 }
 func (a *app) infrastructure(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"docker": map[string]any{"available": false, "message": "Docker não está conectado."}, "swarm": map[string]any{"active": false, "message": "O host não está conectado a um Swarm."}, "nodes": []any{}, "services": []any{}})
