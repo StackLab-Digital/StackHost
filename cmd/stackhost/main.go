@@ -519,7 +519,12 @@ func (a *app) eventsStream(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "data: %s\n\n", b)
 			flusher.Flush()
 		case <-ticker.C:
-			fmt.Fprint(w, "event: heartbeat\ndata: {}\n\n")
+			infra := any(map[string]any{"available": false, "message": "Docker não está conectado."})
+			if a.docker != nil {
+				infra = a.docker.Snapshot(r.Context())
+			}
+			b, _ := json.Marshal(map[string]any{"event": "infrastructure.updated", "data": infra, "at": time.Now().UTC().Format(time.RFC3339)})
+			fmt.Fprintf(w, "data: %s\n\n", b)
 			flusher.Flush()
 		}
 	}
