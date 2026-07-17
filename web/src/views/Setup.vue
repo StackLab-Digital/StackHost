@@ -46,7 +46,7 @@ async function submit() {
 
 <template>
   <div class="center">
-    <img class="public-logo" src="/brand/stackhost-logo.png" alt="StackHost" />
+    <img class="public-logo" src="/brand/stackhost-logo-public.png" alt="StackHost" />
     <p class="kicker">ETAPA {{ step }} DE 4 · CONFIGURAÇÃO</p>
     <div v-if="step === 1">
       <h1>Seu ambiente, sob controle.</h1>

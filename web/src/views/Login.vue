@@ -34,7 +34,7 @@ async function submit() {
 
 <template>
   <div class="center">
-    <img class="public-logo" src="/brand/stackhost-logo.png" alt="StackHost" />
+    <img class="public-logo" src="/brand/stackhost-logo-public.png" alt="StackHost" />
     <p class="kicker">STACKHOST</p>
     <h1>Bem-vindo de volta.</h1>
     <p class="muted">Entre para acessar seu ambiente.</p>
