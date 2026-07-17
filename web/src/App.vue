@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
-import { Activity, FolderKanban, LayoutDashboard, Menu, Server, Settings2, X } from 'lucide-vue-next'
+import { Activity, FolderKanban, LayoutDashboard, Menu, Server, Settings2 } from 'lucide-vue-next'
 import { useAuthStore } from './stores/auth'
 import ToastContainer from './components/ui/ToastContainer.vue'
 const route = useRoute(); const auth = useAuthStore(); const open = ref(false)
@@ -17,7 +17,7 @@ onMounted(() => document.addEventListener('keydown', keydown)); onUnmounted(() =
   <div v-else class="app">
     <div v-if="open" class="mobile-overlay" @click="closeMenu" />
     <aside :class="{ open }">
-      <div class="brand"><span class="mark">S</span><span>StackHost</span><button class="icon-button mobile-close" aria-label="Fechar menu" type="button" @click="closeMenu"><X :size="18" /></button></div>
+      <div class="brand"><img class="brand-logo" src="/brand/stackhost-logo.png" alt="" /><span>StackHost</span></div>
       <nav><RouterLink v-for="link in links" :key="link.to" :to="link.to" @click="closeMenu"><component :is="link.icon" :size="17" aria-hidden="true" />{{ link.label }}</RouterLink></nav>
       <div class="sidebar-foot"><span class="dot" /><div><strong>Ambiente local</strong><small>Docker conectado</small></div></div>
       <RouterLink class="account-link" to="/settings" @click="closeMenu"><span class="avatar">{{ auth.user?.name?.charAt(0).toUpperCase() || 'S' }}</span><span><strong>{{ auth.user?.name || 'Administrador' }}</strong><small>{{ auth.user?.role === 'admin' ? 'Administrador' : 'Usuário' }}</small></span></RouterLink>
