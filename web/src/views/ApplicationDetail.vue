@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import BaseModal from "../components/ui/BaseModal.vue";
 import ComposeCodeEditor from "../components/applications/ComposeCodeEditor.vue";
+import EnvironmentVariablesEditor from "../components/applications/EnvironmentVariablesEditor.vue";
 import { api, RequestError } from "../composables/useApi";
 import { useToast } from "../composables/useToast";
 
@@ -68,7 +69,6 @@ const branch = ref("main");
 const dockerfilePath = ref("Dockerfile");
 const buildContext = ref(".");
 const variables = ref<Variable[]>([]);
-const newVariable = ref<Variable>({ key: "", value: "", secret: false });
 const sourceTypes = [
   { value: "compose", label: "Docker Compose" },
   { value: "image", label: "Imagem Docker" },
@@ -232,14 +232,6 @@ function requestSourceChange(value: string) {
   if (value === sourceType.value) return;
   pendingSourceType.value = value;
   changeOpen.value = true;
-}
-function addVariable() {
-  if (!newVariable.value.key.trim()) return;
-  variables.value.push({ ...newVariable.value });
-  newVariable.value = { key: "", value: "", secret: false };
-}
-function removeVariable(index: number) {
-  variables.value.splice(index, 1);
 }
 function setTab(value: string) {
   router.replace({
@@ -473,37 +465,7 @@ onMounted(load);
           Salvar variáveis
         </button>
       </div>
-      <div class="variable-row new-variable">
-        <input v-model="newVariable.key" placeholder="CHAVE" /><input
-          v-model="newVariable.value"
-          placeholder="Valor"
-          :type="newVariable.secret ? 'password' : 'text'"
-        /><label class="check"
-          ><input v-model="newVariable.secret" type="checkbox" /> Secret</label
-        ><button class="secondary" type="button" @click="addVariable">
-          Adicionar
-        </button>
-      </div>
-      <div v-if="!variables.length" class="empty compact-empty">
-        <p>Nenhuma variável configurada.</p>
-      </div>
-      <div
-        v-for="(item, index) in variables"
-        :key="`${item.key}-${index}`"
-        class="variable-row"
-      >
-        <strong>{{ item.key }}</strong
-        ><span>{{
-          item.secret
-            ? item.has_value
-              ? "•••••••• · valor configurado"
-              : "Sem valor"
-            : item.value
-        }}</span
-        ><button class="ghost" type="button" @click="removeVariable(index)">
-          Remover
-        </button>
-      </div>
+      <EnvironmentVariablesEditor v-model="variables" />
     </section>
     <section v-else class="activity-list">
       <article

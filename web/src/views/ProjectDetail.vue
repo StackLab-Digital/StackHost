@@ -5,6 +5,7 @@ import BaseModal from "../components/ui/BaseModal.vue";
 import ComposeCodeEditor from "../components/applications/ComposeCodeEditor.vue";
 import SourceSummary from "../components/applications/SourceSummary.vue";
 import WizardStepper from "../components/applications/WizardStepper.vue";
+import EnvironmentVariablesEditor from "../components/applications/EnvironmentVariablesEditor.vue";
 import { api, RequestError } from "../composables/useApi";
 import { useToast } from "../composables/useToast";
 import type { Application, Project } from "../types";
@@ -49,6 +50,7 @@ const newSource = ref({
   build_context: ".",
   command: "",
   entrypoint: "",
+  environment: [] as Array<{ key: string; value: string; secret: boolean }>,
   template_slug: "",
   template_version: "",
 });
@@ -149,6 +151,7 @@ function openCreateApp() {
     build_context: ".",
     command: "",
     entrypoint: "",
+    environment: [],
     template_slug: "",
     template_version: "",
   };
@@ -615,6 +618,7 @@ onMounted(load);
                 placeholder="Opcional"
             /></label>
           </details>
+          <EnvironmentVariablesEditor v-model="newSource.environment" />
         </div>
         <div v-else-if="newApp.source_type === 'git'" class="source-form-stack">
           <label
@@ -649,6 +653,7 @@ onMounted(load);
             ><span>Branch</span
             ><strong>{{ newSource.branch || "main" }}</strong>
           </div>
+          <EnvironmentVariablesEditor v-model="newSource.environment" />
         </div>
         <div v-else-if="newApp.source_type === 'catalog'" class="source-grid">
           <button
