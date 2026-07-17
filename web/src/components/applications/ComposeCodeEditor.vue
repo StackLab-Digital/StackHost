@@ -109,6 +109,8 @@ function setValue(value: string) {
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: value },
   });
+  view.scrollDOM.scrollTop = 0;
+  view.focus();
 }
 function loadExample() {
   setValue(example);
