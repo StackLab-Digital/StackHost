@@ -637,14 +637,13 @@ func (a *app) applicationRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Name            string `json:"name"`
-		Status          string `json:"status"`
 		DockerStackName string `json:"docker_stack_name"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		jsonError(w, 422, "validation_failed", "Revise os campos informados.")
 		return
 	}
-	_, err = a.db.Exec("UPDATE applications SET name=COALESCE(NULLIF(?,''),name), status=COALESCE(NULLIF(?,''),status), docker_stack_name=COALESCE(?,docker_stack_name), updated_at=? WHERE id=?", in.Name, in.Status, in.DockerStackName, time.Now().UTC().Format(time.RFC3339), id)
+	_, err = a.db.Exec("UPDATE applications SET name=COALESCE(NULLIF(?,''),name), docker_stack_name=COALESCE(?,docker_stack_name), updated_at=? WHERE id=?", in.Name, in.DockerStackName, time.Now().UTC().Format(time.RFC3339), id)
 	if err != nil {
 		jsonError(w, 500, "internal_error", "Não foi possível atualizar a aplicação.")
 		return
