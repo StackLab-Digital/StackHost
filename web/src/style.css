@@ -416,6 +416,21 @@ h2 {
   font-family: "Space Mono", monospace;
   font-size: 12px;
 }
+.source-preview.full-width {
+  grid-column: 1 / -1;
+}
+.review-section {
+  margin: 18px 0;
+  padding: 14px;
+  border-radius: 8px;
+  background: #191c21;
+}
+.review-section h3 {
+  margin: 0 0 8px;
+}
+.review-section p {
+  margin: 6px 0;
+}
 .primary:disabled,
 .secondary:disabled {
   cursor: not-allowed;

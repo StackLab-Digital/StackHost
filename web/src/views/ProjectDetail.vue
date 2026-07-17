@@ -60,6 +60,7 @@ const catalogTemplates = ref<
     name: string;
     description: string;
     version: string;
+    category: string;
     source: string;
   }>
 >([]);
@@ -77,6 +78,11 @@ const composeSummary = computed(() => {
       .filter((port) => port.includes(":")),
   };
 });
+const selectedCatalog = computed(() =>
+  catalogTemplates.value.find(
+    (template) => template.slug === newSource.value.template_slug,
+  ),
+);
 const sources = [
   {
     value: "catalog",
@@ -673,6 +679,12 @@ onMounted(load);
           <small v-if="!newSource.template_slug" class="error-field"
             >Selecione um template para continuar.</small
           >
+          <div v-if="selectedCatalog" class="source-preview full-width">
+            <span>Template</span><strong>{{ selectedCatalog.name }}</strong>
+            <span>Versão</span><strong>{{ selectedCatalog.version }}</strong>
+            <span>Categoria</span
+            ><strong>{{ selectedCatalog.category }}</strong>
+          </div>
         </div>
         <p v-else class="muted">
           O template oficial Nginx poderá ser selecionado na tela de catálogo.
@@ -680,15 +692,43 @@ onMounted(load);
       </div>
       <div v-else class="review-block">
         <h2>Revise antes de criar</h2>
-        <p>
-          <strong>{{ newApp.name }}</strong>
-        </p>
+        <section class="review-section">
+          <h3>Aplicação</h3>
+          <p>
+            <strong>{{ newApp.name }}</strong>
+          </p>
+          <p class="muted">{{ newApp.description || "Sem descrição" }}</p>
+          <p class="muted">
+            Stack: {{ newApp.docker_stack_name || "projeto-aplicacao" }}
+          </p>
+        </section>
+        <section class="review-section">
+          <h3>Origem</h3>
+          <p class="muted">
+            {{
+              sources.find((item) => item.value === newApp.source_type)?.label
+            }}
+          </p>
+          <p v-if="newApp.source_type === 'image'">
+            <strong>{{ newSource.image }}</strong> ·
+            {{ newSource.replicas }} réplica(s)
+          </p>
+          <p v-else-if="newApp.source_type === 'git'">
+            <strong>{{ newSource.repository_url }}</strong> ·
+            {{ newSource.branch }}
+          </p>
+          <p v-else-if="newApp.source_type === 'catalog'">
+            <strong>{{ selectedCatalog?.name }}</strong> ·
+            {{ selectedCatalog?.version }}
+          </p>
+          <p v-else>
+            {{ composeSummary.services.length }} serviço(s),
+            {{ composeSummary.images.length }} imagem(ns),
+            {{ composeSummary.ports.length }} porta(s)
+          </p>
+        </section>
         <p class="muted">
-          {{ sources.find((item) => item.value === newApp.source_type)?.label }}
-          · A publicação será configurada em uma próxima etapa.
-        </p>
-        <p class="muted">
-          A configuração será salva com segurança e poderá ser validada depois.
+          Pronta para criar. A configuração será salva com segurança.
         </p>
       </div>
     </form>
