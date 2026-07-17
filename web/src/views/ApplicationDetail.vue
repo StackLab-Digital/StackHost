@@ -73,6 +73,7 @@ const dockerfilePath = ref("Dockerfile");
 const buildContext = ref(".");
 const variables = ref<Variable[]>([]);
 const detectedVariables = ref<NonNullable<Validation["summary"]["environment_variables"]>>([]);
+const runtime = ref<{ mode: string; status: string; services: Array<{ name: string; image: string; desired: number; running: number; failed: number }> } | null>(null);
 const sourceTypes = [
   { value: "compose", label: "Docker Compose" },
   { value: "image", label: "Imagem Docker" },
@@ -99,6 +100,7 @@ async function load() {
     );
     detectedVariables.value = application.value.source_summary?.environment_variables || [];
     await loadSource();
+    runtime.value = await api<typeof runtime.value>(`/api/v1/applications/${route.params.applicationId}/runtime`);
   } catch (err) {
     error.value =
       err instanceof Error
@@ -376,6 +378,12 @@ onMounted(load);
           Valide a origem para exibir serviços, imagens, portas, volumes e redes
           detectados.
         </p>
+      </article>
+      <article v-if="sourceType === 'compose' && runtime" class="panel full-width">
+        <p class="label">PUBLICAÇÃO</p>
+        <h2>{{ runtime.status === "running" ? "Aplicação em execução" : "Ainda não publicada" }}</h2>
+        <p class="muted">Modo: {{ runtime.mode === "swarm" ? "Docker Swarm" : "Docker em servidor único" }}</p>
+        <div v-if="runtime.services.length" class="summary-grid compact"><div v-for="service in runtime.services" :key="service.name"><span>{{ service.name }}</span><strong>{{ service.running }}/{{ service.desired }}</strong><small>{{ service.image }}</small></div></div>
       </article>
     </section>
     <section v-else-if="tab === 'source'" class="source-editor">
