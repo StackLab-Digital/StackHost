@@ -87,6 +87,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("/api/v1/projects/", a.auth(a.projectRoute))
 	mux.HandleFunc("/api/v1/applications/", a.auth(a.applicationRoute))
 	mux.HandleFunc("/api/v1/infrastructure", a.auth(a.infrastructure))
+	mux.HandleFunc("/api/v1/activity", a.auth(a.activity))
 	mux.HandleFunc("/api/v1/events", a.auth(a.eventsStream))
 	mux.HandleFunc("/", a.spa)
 	return security(mux)
@@ -162,6 +163,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.db.Exec("UPDATE users SET last_login_at=? WHERE id=?", time.Now().UTC().Format(time.RFC3339), id)
+	a.audit(id, "login", "user", id)
 	a.createSession(w, r, id)
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
@@ -226,6 +228,26 @@ func (a *app) dashboard(w http.ResponseWriter, r *http.Request) {
 	a.db.QueryRow("SELECT count(*) FROM applications").Scan(&apps)
 	json.NewEncoder(w).Encode(map[string]any{"projects": projects, "applications": apps, "infrastructure": map[string]any{"docker": "unknown", "swarm": "unknown"}})
 }
+func (a *app) audit(userID int64, action, resource string, resourceID any) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	a.db.Exec("INSERT INTO audit_logs(user_id,action,resource_type,resource_id,created_at) VALUES(?,?,?,?,?)", userID, action, resource, fmt.Sprint(resourceID), now)
+}
+func (a *app) activity(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.db.Query("SELECT id,action,coalesce(resource_type,''),coalesce(resource_id,''),created_at FROM audit_logs ORDER BY id DESC LIMIT 50")
+	if err != nil {
+		jsonError(w, 500, "internal_error", "Não foi possível carregar a atividade.")
+		return
+	}
+	defer rows.Close()
+	out := []any{}
+	for rows.Next() {
+		var id int
+		var action, resource, resourceID, created string
+		rows.Scan(&id, &action, &resource, &resourceID, &created)
+		out = append(out, map[string]any{"id": id, "action": action, "resource_type": resource, "resource_id": resourceID, "created_at": created})
+	}
+	json.NewEncoder(w).Encode(out)
+}
 func (a *app) projects(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method == "GET" {
@@ -260,6 +282,9 @@ func (a *app) projects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
+	if userID, ok := r.Context().Value(userKey{}).(int64); ok {
+		a.audit(userID, "project.created", "project", id)
+	}
 	a.publish("project.created", map[string]any{"id": id, "name": in.Name})
 	json.NewEncoder(w).Encode(map[string]any{"id": id, "name": in.Name, "slug": in.Slug, "status": "active"})
 }
@@ -355,6 +380,9 @@ func (a *app) applications(w http.ResponseWriter, r *http.Request, projectID int
 		return
 	}
 	id, _ := res.LastInsertId()
+	if userID, ok := r.Context().Value(userKey{}).(int64); ok {
+		a.audit(userID, "application.created", "application", id)
+	}
 	a.publish("application.created", map[string]any{"id": id, "project_id": projectID})
 	json.NewEncoder(w).Encode(map[string]any{"id": id, "project_id": projectID, "name": in.Name, "slug": in.Slug, "source_type": in.SourceType, "status": "unknown"})
 }
