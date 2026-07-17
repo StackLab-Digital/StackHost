@@ -451,7 +451,7 @@ onMounted(load);
         </p>
       </div>
     </section>
-    <section v-else-if="tab === 'variables'" class="panel variable-editor">
+    <section v-else-if="tab === 'variables'" class="variable-editor">
       <div class="section-head">
         <div>
           <p class="kicker">VARIÁVEIS</p>
