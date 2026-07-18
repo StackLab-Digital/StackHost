@@ -27,6 +27,14 @@ const refreshEvents = new Set([
   "application.source_invalid",
   "application.source_changed",
   "swarm.initialized",
+  "application.started",
+  "application.stopped",
+  "application.restarted",
+  "application.runtime_updated",
+  "deployment.created",
+  "deployment.updated",
+  "backup.created",
+  "domain.updated",
 ]);
 const nowGreeting = computed(() => {
   const hour = new Date().getHours();
@@ -94,9 +102,19 @@ function stopPolling() {
   pollTimer = undefined;
 }
 function startPolling() {
+	if (document.hidden) return;
   if (pollTimer !== undefined) return;
   void load(true);
   pollTimer = window.setInterval(() => void load(true), 30_000);
+}
+function handleVisibility() {
+  if (document.hidden) {
+    stopPolling();
+  } else if (!source || source.readyState !== EventSource.OPEN) {
+    startPolling();
+  } else {
+    void load(true);
+  }
 }
 function handleEvent(event: MessageEvent<string>) {
   let message: { event?: string; data?: Infrastructure };
@@ -142,10 +160,12 @@ onMounted(async () => {
   } catch {
     startPolling();
   }
+  document.addEventListener("visibilitychange", handleVisibility);
 });
 onUnmounted(() => {
   source?.close();
   stopPolling();
+  document.removeEventListener("visibilitychange", handleVisibility);
 });
 </script>
 <template>
@@ -373,7 +393,7 @@ onUnmounted(() => {
 .operational-card { display: grid; gap: 8px; color: inherit; text-decoration: none; }
 .operational-card strong { font-size: 28px; }
 .operational-card span:last-child, .alert-row span { color: var(--muted, #858b99); font-size: 13px; }
-.operational-alerts { display: grid; gap: 12px; }
+.operational-alerts, .resource-health { display: grid; gap: 12px; margin-top: 14px; }
 .alert-row { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid #2a2d34; color: inherit; text-decoration: none; }
 .deploy-meta { display: inline-flex; align-items: center; gap: 12px; }
 .deploy-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 9px; border: 1px solid transparent; border-radius: 999px; font-size: 11px; font-weight: 700; line-height: 1; }
