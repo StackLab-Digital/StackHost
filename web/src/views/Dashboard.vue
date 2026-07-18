@@ -56,6 +56,7 @@ function deploymentStatusClass(status: string) {
   return "neutral";
 }
 const userName = ref("Administrador");
+const lastUpdated = ref<Date | null>(null);
 async function load(silent = false) {
   if (refreshing) return;
   refreshing = true;
@@ -65,6 +66,7 @@ async function load(silent = false) {
   }
   try {
     data.value = await api("/api/v1/dashboard");
+    lastUpdated.value = new Date();
     if (silent) {
       error.value = "";
     } else {
@@ -166,9 +168,7 @@ onUnmounted(() => {
       <h1>{{ nowGreeting }}, {{ userName }}</h1>
       <p class="muted">Aqui está o estado do seu ambiente.</p>
     </div>
-    <button class="primary" type="button" @click="showProject = true">
-      + Novo projeto
-    </button>
+    <div class="hero-actions"><span v-if="lastUpdated" class="last-updated">Atualizado às {{ lastUpdated.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }}</span><button class="ghost" type="button" @click="load()">Atualizar</button><button class="primary" type="button" @click="showProject = true">+ Novo projeto</button></div>
   </div>
   <div v-if="loading" class="grid">
     <article v-for="n in 3" :key="n" class="skeleton-card">
@@ -203,6 +203,10 @@ onUnmounted(() => {
         </p>
       </div>
       <span class="pill">{{ overallMessage }}</span>
+    </section>
+    <section v-if="data.applications_attention?.length" class="panel panel-section attention-applications">
+      <div class="section-head"><div><p class="kicker">APLICAÇÕES</p><h2>Precisam de atenção</h2></div><RouterLink class="ghost" to="/applications">Ver todas</RouterLink></div>
+      <RouterLink v-for="item in data.applications_attention" :key="item.id" class="attention-application" :to="`/applications/${item.id}`"><strong>{{ item.name }}</strong><span class="deploy-badge" :class="deploymentStatusClass(item.status)">{{ deploymentStatusLabel(item.status) }}</span></RouterLink>
     </section>
     <section v-if="data.alerts?.length" class="panel panel-section operational-alerts">
       <div class="section-head"><div><p class="kicker">ATENÇÃO</p><h2>Alertas operacionais</h2></div></div>
@@ -375,6 +379,10 @@ onUnmounted(() => {
 <style scoped>
 .alert-row span { color: var(--muted, #858b99); font-size: 13px; }
 .operational-alerts, .resource-health { display: grid; gap: 12px; margin-top: 14px; }
+.attention-applications { display: grid; gap: 12px; margin-top: 14px; }
+.attention-application { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid #2a2d34; color: inherit; text-decoration: none; }
+.hero-actions { display: flex; align-items: center; gap: 10px; }
+.last-updated { color: #858b99; font-size: 12px; }
 .alert-row { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid #2a2d34; color: inherit; text-decoration: none; }
 .deploy-meta { display: inline-flex; align-items: center; gap: 12px; }
 .deploy-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 9px; border: 1px solid transparent; border-radius: 999px; font-size: 11px; font-weight: 700; line-height: 1; }
