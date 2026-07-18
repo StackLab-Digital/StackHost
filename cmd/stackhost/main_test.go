@@ -297,14 +297,14 @@ func TestCleanDatabaseIntegrationFlow(t *testing.T) {
 	dashboardReq.AddCookie(cookie)
 	a.auth(a.dashboard)(dashboard, dashboardReq)
 	var payload struct {
-		Projects     int   `json:"projects"`
-		Applications int   `json:"applications"`
-		Activity     []any `json:"activity"`
+		Projects     int            `json:"projects"`
+		Applications map[string]int `json:"applications"`
+		Activity     []any          `json:"activity"`
 	}
 	if err := json.NewDecoder(dashboard.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Projects != 1 || payload.Applications != 1 || len(payload.Activity) == 0 {
+	if payload.Projects != 1 || payload.Applications["total"] != 1 || len(payload.Activity) == 0 {
 		t.Fatalf("dashboard payload = %#v", payload)
 	}
 }

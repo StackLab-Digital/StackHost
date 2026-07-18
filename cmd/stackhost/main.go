@@ -42,6 +42,7 @@ type app struct {
 	domains       *domainAPI
 	ingressProxy  *ingress.Proxy
 	backups       *backupAPI
+	dataDir       string
 }
 type attempt struct {
 	count int
@@ -81,7 +82,7 @@ func main() {
 	dr, _ := dockerreader.NewReader()
 	events := eventhub.New(64)
 	defer events.Close()
-	a := &app{db: db, sessionSecret: sessionSecret, cipher: cipher, events: events, docker: dr, loginAttempts: make(map[string]attempt)}
+	a := &app{db: db, sessionSecret: sessionSecret, cipher: cipher, events: events, docker: dr, dataDir: dataDir, loginAttempts: make(map[string]attempt)}
 	a.backups = &backupAPI{app: a, dataDir: dataDir}
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
 	defer schedulerCancel()
@@ -137,6 +138,8 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("/api/v1/auth/logout", a.logout)
 	mux.HandleFunc("/api/v1/me", a.auth(a.me))
 	mux.HandleFunc("/api/v1/dashboard", a.auth(a.dashboard))
+	mux.HandleFunc("/api/v1/system/health", a.auth(a.systemHealth))
+	mux.HandleFunc("/api/v1/system/resources", a.auth(a.systemResources))
 	mux.HandleFunc("/api/v1/projects", a.auth(a.projects))
 	mux.HandleFunc("/api/v1/projects/", a.auth(a.projectRoute))
 	mux.HandleFunc("/api/v1/applications/", a.auth(a.applicationRouteV2))
@@ -377,7 +380,7 @@ func (a *app) me(w http.ResponseWriter, r *http.Request) {
 	a.db.QueryRow("SELECT id,name,email,role FROM users WHERE id=?", r.Context().Value(userKey{})).Scan(&u.ID, &u.Name, &u.Email, &u.Role)
 	json.NewEncoder(w).Encode(u)
 }
-func (a *app) dashboard(w http.ResponseWriter, r *http.Request) {
+func (a *app) dashboardLegacy(w http.ResponseWriter, r *http.Request) {
 	var projects, apps int
 	a.db.QueryRow("SELECT count(*) FROM projects").Scan(&projects)
 	a.db.QueryRow("SELECT count(*) FROM applications").Scan(&apps)

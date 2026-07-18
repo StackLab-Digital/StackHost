@@ -32,7 +32,12 @@ const nowGreeting = computed(() => {
   const hour = new Date().getHours();
   return hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
 });
-const infra = computed(() => data.value.infrastructure as Infrastructure);
+const infra = computed(() => ((data.value && (data.value.docker || data.value.infrastructure)) || {}) as Infrastructure);
+const overallMessage = computed(() => {
+  if (!infra.value.available) return "Docker indisponível";
+  const count = (data.value.alerts || []).length;
+  return count ? `${count} ${count === 1 ? "item precisa" : "itens precisam"} de atenção` : "Tudo funcionando";
+});
 const userName = ref("Administrador");
 async function load(silent = false) {
   if (refreshing) return;
@@ -168,14 +173,20 @@ onUnmounted(() => {
           }}
         </p>
       </div>
-      <span class="pill">{{
-        infra.available
-          ? infra.swarm?.active
-            ? "Pronto"
-            : "Ação necessária"
-          : "Atenção"
-      }}</span>
+      <span class="pill">{{ overallMessage }}</span>
     </section>
+    <section v-if="data.applications" class="grid metrics operational-cards">
+      <RouterLink class="panel operational-card" to="/applications"><span class="label">APLICAÇÕES</span><strong>{{ data.applications.total }}</strong><span>{{ data.applications.running || 0 }} em execução · {{ data.applications.degraded || 0 }} degradadas</span></RouterLink>
+      <RouterLink class="panel operational-card" to="/applications"><span class="label">DEPLOYS</span><strong>{{ data.deployments?.running || 0 }}</strong><span>{{ data.deployments?.failed_last_24h || 0 }} falhos em 24h</span></RouterLink>
+      <RouterLink class="panel operational-card" to="/applications"><span class="label">DOMÍNIOS</span><strong>{{ data.domains?.active || 0 }}</strong><span>{{ data.domains?.pending || 0 }} pendentes · {{ data.domains?.errors || 0 }} com erro</span></RouterLink>
+      <RouterLink class="panel operational-card" to="/settings"><span class="label">BACKUPS</span><strong>{{ data.backups?.last_status || "—" }}</strong><span>{{ data.backups?.last_created_at ? new Date(data.backups.last_created_at).toLocaleString("pt-BR") : "Nenhum backup registrado" }}</span></RouterLink>
+    </section>
+    <section v-if="data.alerts?.length" class="panel panel-section operational-alerts">
+      <div class="section-head"><div><p class="kicker">ATENÇÃO</p><h2>Alertas operacionais</h2></div></div>
+      <RouterLink v-for="alert in data.alerts" :key="alert.code" class="alert-row" :to="alert.action_url || '/'"><strong>{{ alert.title }}</strong><span>{{ alert.description }}</span></RouterLink>
+    </section>
+    <section v-if="data.host" class="panel panel-section resource-health"><div class="section-head"><div><p class="kicker">SAÚDE DO SERVIDOR</p><h2>Recursos do ambiente</h2></div><button class="ghost" type="button" @click="load()">Atualizar</button></div><div class="resource-bars"><div><span>CPU</span><strong>{{ data.host.cpu_percent == null ? "Indisponível" : `${data.host.cpu_percent}%` }}</strong></div><div><span>Memória</span><strong>{{ data.host.memory_used_bytes == null ? "Indisponível" : `${Math.round(data.host.memory_used_bytes / 1073741824 * 10) / 10} GB de ${Math.round(data.host.memory_total_bytes / 1073741824 * 10) / 10} GB` }}</strong></div><div><span>Disco</span><strong>{{ data.host.disk_used_bytes == null ? "Indisponível" : `${Math.round(data.host.disk_used_bytes / 1073741824)} GB de ${Math.round(data.host.disk_total_bytes / 1073741824)} GB` }}</strong></div></div></section>
+    <section v-if="data.deployments?.recent?.length" class="panel panel-section operational-alerts"><div class="section-head"><div><p class="kicker">DEPLOYS</p><h2>Deploys recentes</h2></div><RouterLink class="ghost" to="/activity">Ver atividade</RouterLink></div><RouterLink v-for="item in data.deployments.recent" :key="item.id" class="alert-row" :to="`/applications/${item.application_id}?tab=deployments`"><strong>{{ item.application }} · {{ item.status }}</strong><span>Revisão {{ item.revision }} · {{ new Date(item.created_at).toLocaleString("pt-BR") }}</span></RouterLink></section>
     <section v-if="infra.available && !infra.swarm?.active" class="callout">
       <div>
         <p class="kicker">PRÓXIMO PASSO</p>
@@ -338,3 +349,17 @@ onUnmounted(() => {
     ></BaseModal
   >
 </template>
+
+<style scoped>
+.operational-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.operational-card { display: grid; gap: 8px; color: inherit; text-decoration: none; }
+.operational-card strong { font-size: 28px; }
+.operational-card span:last-child, .alert-row span { color: var(--muted, #858b99); font-size: 13px; }
+.operational-alerts { display: grid; gap: 12px; }
+.alert-row { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid #2a2d34; color: inherit; text-decoration: none; }
+.resource-bars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.resource-bars > div { display: grid; gap: 6px; }
+.resource-bars span { color: var(--muted, #858b99); font-size: 12px; }
+@media (max-width: 800px) { .operational-cards, .resource-bars { grid-template-columns: 1fr 1fr; } .alert-row { display: grid; gap: 4px; } }
+@media (max-width: 480px) { .operational-cards, .resource-bars { grid-template-columns: 1fr; } }
+</style>

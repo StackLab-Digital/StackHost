@@ -11,7 +11,7 @@ Início: `2026-07-17 17:27:45 -03`
 - [x] Fase 2 — Proxy nativo e domínios (base operacional entregue; renovação ACME e propagação DNS seguem observáveis)
 - [x] Fase 3 — Controle operacional
 - [x] Fase 4 — Logs
-- [ ] Fase 5 — Monitoramento e saúde (métricas locais + retenção de 24h entregues; dashboard/Swarm global pendentes)
+- [x] Fase 5 — Monitoramento e saúde (dashboard operacional, saúde do host, agregações e alertas derivados; métricas locais mantidas)
 - [x] Fase 6 — Backups (backup local, retenção e agendamento manual/diário/semanal)
 - [x] Fase 7 — Notificações (webhook/Discord/Slack configuráveis e eventos operacionais básicos)
 - [ ] Fase 8 — Catálogo e produtividade (duplicação de aplicações entregue; importação avançada pendente)
@@ -53,6 +53,7 @@ O build Docker pós-correções passou com a imagem `stackhost:features-boost`. 
 - O runtime agora expõe health real do Docker SDK (`healthy`, `starting`, `unhealthy`, `no_healthcheck`) e uma amostra de métricas locais Docker (`/api/v1/applications/:id/metrics`) com retenção de 24 horas e UI resumida. Swarm permanece explicitamente `unknown` para métricas não locais. Notificações têm configuração protegida, teste de webhook, UI e entrega assíncrona para eventos publicados. Aplicações podem ser duplicadas preservando a origem criptografada e iniciando como `not_deployed`.
 - Backup local do sistema entregue em `POST/GET /api/v1/backups/system`, com SQLite via `VACUUM INTO`, certificados persistidos em tar.gz, download e remoção protegidos por admin, controles em Configurações, retenção e scheduler interno manual/diário/semanal. Destinos S3 continuam pendentes.
 - Ajuste incremental da fase de logs: `tail` agora aceita somente 100, 500 ou 1000; o viewer ganhou busca local, auto-scroll, cópia, download, limpeza visual e indicador de conexão.
+- Dashboard operacional entregue em `/api/v1/dashboard`, com saúde do host em `/api/v1/system/health` e `/api/v1/system/resources`, agregação de aplicações/deploys/domínios/backups, alertas derivados e cards responsivos; métricas indisponíveis retornam `null`.
 
 ## Último commit validado
 
