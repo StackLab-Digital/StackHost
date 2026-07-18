@@ -125,8 +125,6 @@ onMounted(load);
 .domain-form { display: grid; grid-template-columns: minmax(220px, 1.5fr) minmax(140px, 1fr) 110px; gap: 14px; align-items: end; }
 .domain-form label { display: grid; gap: 7px; color: #b9bec9; font-size: 12px; }
 .domain-form input, .domain-form select { min-width: 0; border: 1px solid #343842; border-radius: 7px; padding: 10px 11px; background: #17191e; color: #e7e9ee; }
-.domain-form .checkbox { display: flex; align-items: center; gap: 7px; font-size: 14px; line-height: 1.2; }
-.domain-form .checkbox input { accent-color: #e8f55b; }
 .domain-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .domain-list li { display: grid; gap: 10px; padding: 16px; border: 1px solid #2a2d34; border-radius: 10px; background: #17191e; }
 .domain-list li > div:first-child { display: flex; gap: 14px; align-items: center; }
