@@ -12,7 +12,7 @@ Início: `2026-07-17 17:27:45 -03`
 - [x] Fase 3 — Controle operacional
 - [x] Fase 4 — Logs
 - [ ] Fase 5 — Monitoramento e saúde (métricas locais + retenção de 24h entregues; dashboard/Swarm global pendentes)
-- [x] Fase 6 — Backups (backup local do sistema)
+- [x] Fase 6 — Backups (backup local, retenção e agendamento manual/diário/semanal)
 - [x] Fase 7 — Notificações (webhook/Discord/Slack configuráveis e eventos operacionais básicos)
 - [ ] Fase 8 — Catálogo e produtividade (duplicação de aplicações entregue; importação avançada pendente)
 - [ ] Fase 9 — Git público, somente se o restante estiver estável
@@ -51,10 +51,10 @@ O build Docker pós-correções passou com a imagem `stackhost:features-boost`. 
 - Manifestos Docker/Swarm agora usam filesystem somente leitura, `/tmp` limitado e `no-new-privileges`; o socket continua exigindo acesso efetivo de escrita para operar workloads e permanece um risco explícito de host.
 - `go test ./...`, `go vet ./...` e `go mod verify` passaram após alinhar as dependências Go.
 - O runtime agora expõe health real do Docker SDK (`healthy`, `starting`, `unhealthy`, `no_healthcheck`) e uma amostra de métricas locais Docker (`/api/v1/applications/:id/metrics`) com retenção de 24 horas e UI resumida. Swarm permanece explicitamente `unknown` para métricas não locais. Notificações têm configuração protegida, teste de webhook, UI e entrega assíncrona para eventos publicados. Aplicações podem ser duplicadas preservando a origem criptografada e iniciando como `not_deployed`.
-- Backup local do sistema entregue em `POST/GET /api/v1/backups/system`, com SQLite via `VACUUM INTO`, certificados persistidos em tar.gz, download e remoção protegidos por admin, além de controles básicos em Configurações. Destinos S3 e agendamento continuam pendentes.
+- Backup local do sistema entregue em `POST/GET /api/v1/backups/system`, com SQLite via `VACUUM INTO`, certificados persistidos em tar.gz, download e remoção protegidos por admin, controles em Configurações, retenção e scheduler interno manual/diário/semanal. Destinos S3 continuam pendentes.
 
 ## Último commit validado
 
-`d4e462c` — dependências Go alinhadas após validação completa; publicado em `origin/features-boost`.
+`3e3cfb0` — agendamento e retenção local de backups; publicado em `origin/features-boost`.
 
-Última validação de código: `gofmt`, `git diff --check`, lint, typecheck, 14 testes frontend, build web, `go test ./...`, `go vet ./...`, `go mod verify`, build Docker e smoke HTTP da imagem verdes. A branch foi publicada e permanece sem merge em `develop`.
+Última validação de código: `gofmt`, `git diff --check`, lint, typecheck, 14 testes frontend, build web, `go test ./...`, `go vet ./...`, `go mod verify`, build Docker pós-scheduler e smoke HTTP da imagem (`ready=200`, migrations 1–9) verdes. A branch foi publicada e permanece sem merge em `develop`.
