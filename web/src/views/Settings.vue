@@ -14,6 +14,9 @@ const runtimeMode = ref<"standalone" | "swarm">("standalone");
 const runtimeSaving = ref(false);
 const backups = ref<Array<{ id: number; status: string; size_bytes: number; created_at: string }>>([]);
 const backupBusy = ref(false);
+const backupSchedule = ref<"manual" | "daily" | "weekly">("manual");
+const backupRetention = ref(7);
+const backupSettingsBusy = ref(false);
 const notifications = ref<Array<{ id: number; name: string; kind: string; last_status: string }>>([]);
 const notificationName = ref("");
 const notificationURL = ref("");
@@ -24,6 +27,10 @@ async function load() {
     const settings = await api<{ runtime_mode: "standalone" | "swarm" }>("/api/v1/settings/environment");
     runtimeMode.value = settings.runtime_mode;
     if (auth.user?.role === "admin") backups.value = await api<typeof backups.value>("/api/v1/backups/system");
+    if (auth.user?.role === "admin") {
+      const settings = await api<{ schedule: "manual" | "daily" | "weekly"; retention: number }>("/api/v1/backups/settings");
+      backupSchedule.value = settings.schedule; backupRetention.value = settings.retention;
+    }
     if (auth.user?.role === "admin") notifications.value = await api<typeof notifications.value>("/api/v1/notifications");
   } finally {
     loading.value = false;
@@ -46,6 +53,12 @@ async function createBackup() {
   try { await api("/api/v1/backups/system", { method: "POST" }); backups.value = await api<typeof backups.value>("/api/v1/backups/system"); toast.success("Backup criado."); }
   catch (err) { toast.error(err instanceof Error ? err.message : "Não foi possível criar o backup."); }
   finally { backupBusy.value = false; }
+}
+async function saveBackupSettings() {
+  backupSettingsBusy.value = true;
+  try { await api("/api/v1/backups/settings", { method: "PATCH", body: JSON.stringify({ schedule: backupSchedule.value, retention: backupRetention.value }) }); toast.success("Agenda de backup salva."); }
+  catch (err) { toast.error(err instanceof Error ? err.message : "Não foi possível salvar a agenda."); }
+  finally { backupSettingsBusy.value = false; }
 }
 async function removeBackup(id: number) {
   try { await api(`/api/v1/backups/system/${id}`, { method: "DELETE" }); backups.value = backups.value.filter((item) => item.id !== id); }
@@ -111,6 +124,7 @@ onMounted(load);
       <h2>Recuperação do StackHost</h2>
       <p class="muted">Inclui o SQLite e os certificados locais. Os arquivos ficam somente neste servidor.</p>
       <button class="secondary" type="button" :disabled="backupBusy" @click="createBackup">{{ backupBusy ? "Criando…" : "Criar backup agora" }}</button>
+      <div class="settings-form"><label>Agenda <select v-model="backupSchedule"><option value="manual">Manual</option><option value="daily">Diária</option><option value="weekly">Semanal</option></select></label><label>Reter <input v-model.number="backupRetention" type="number" min="1" max="100" /> backups</label><button class="ghost" type="button" :disabled="backupSettingsBusy" @click="saveBackupSettings">Salvar agenda</button></div>
       <ul v-if="backups.length" class="settings-list">
         <li v-for="backup in backups" :key="backup.id"><span>{{ new Date(backup.created_at).toLocaleString() }}</span><a :href="`/api/v1/backups/system/${backup.id}/download`">Baixar</a><button class="ghost" type="button" @click="removeBackup(backup.id)">Remover</button></li>
       </ul>

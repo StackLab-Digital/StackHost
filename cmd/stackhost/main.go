@@ -83,6 +83,9 @@ func main() {
 	defer events.Close()
 	a := &app{db: db, sessionSecret: sessionSecret, cipher: cipher, events: events, docker: dr, loginAttempts: make(map[string]attempt)}
 	a.backups = &backupAPI{app: a, dataDir: dataDir}
+	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
+	defer schedulerCancel()
+	go a.backups.scheduler(schedulerCtx)
 	a.ingressProxy = ingress.NewProxy()
 	a.domains = newDomainAPI(a, ingress.NewSQLStore(db), a.ingressProxy, dr)
 	a.domains.reload(context.Background())
@@ -153,6 +156,7 @@ func (a *app) routes() http.Handler {
 	}))
 	mux.HandleFunc("/api/v1/backups/system", a.auth(a.backupRoute))
 	mux.HandleFunc("/api/v1/backups/system/", a.auth(a.backupRoute))
+	mux.HandleFunc("/api/v1/backups/settings", a.auth(a.backupSettingsRoute))
 	mux.HandleFunc("/api/v1/notifications", a.auth(a.notificationsRoute))
 	mux.HandleFunc("/api/v1/notifications/", a.auth(a.notificationsRoute))
 	mux.HandleFunc("/api/v1/catalog", a.auth(a.catalog))

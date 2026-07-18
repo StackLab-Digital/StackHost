@@ -20,7 +20,7 @@ func TestRunUpgradesEverySupportedVersion(t *testing.T) {
 		{name: "version 1", version: 1},
 		{name: "version 2", version: 2},
 		{name: "version 3", version: 3},
-		{name: "current", version: 8},
+		{name: "current", version: 9},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			db := openTestDB(t)
@@ -142,15 +142,15 @@ func openTestDB(t *testing.T) *sql.DB {
 
 func assertCurrentSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if Latest() != 8 {
+	if Latest() != 9 {
 		t.Fatalf("latest version = %d", Latest())
 	}
 	current, err := IsCurrent(context.Background(), db)
 	if err != nil || !current {
 		t.Fatalf("current = %v, err = %v", current, err)
 	}
-	assertVersions(t, db, []int{1, 2, 3, 4, 5, 6, 7, 8})
-	for _, table := range []string{"users", "application_sources", "environment_settings", "deployments", "application_domains", "backups", "runtime_metrics", "notifications"} {
+	assertVersions(t, db, []int{1, 2, 3, 4, 5, 6, 7, 8, 9})
+	for _, table := range []string{"users", "application_sources", "environment_settings", "deployments", "application_domains", "backups", "runtime_metrics", "notifications", "backup_settings"} {
 		if !tableExists(t, db, table) {
 			t.Fatalf("missing table %s", table)
 		}

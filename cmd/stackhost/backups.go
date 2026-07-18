@@ -20,6 +20,32 @@ type backupAPI struct {
 	dataDir string
 }
 
+func (h *backupAPI) createBackup(ctx context.Context) (int64, error) {
+	if err := os.MkdirAll(filepath.Join(h.dataDir, "backups"), 0750); err != nil {
+		return 0, err
+	}
+	now := time.Now().UTC()
+	path := filepath.Join(h.dataDir, "backups", "stackhost-"+now.Format("20060102-150405")+".tar.gz")
+	if err := h.writeArchive(ctx, path); err != nil {
+		return 0, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	result, err := h.app.db.ExecContext(ctx, `INSERT INTO backups(kind,status,path,size_bytes,created_at) VALUES('system','ready',?,?,?)`, path, info.Size(), now.Format(time.RFC3339Nano))
+	if err != nil {
+		_ = os.Remove(path)
+		return 0, err
+	}
+	id, err := result.LastInsertId()
+	if err == nil {
+		h.prune(ctx)
+		h.app.publish("backup.succeeded", map[string]any{"backup_id": id, "size_bytes": info.Size()})
+	}
+	return id, err
+}
+
 func (a *app) backupRoute(w http.ResponseWriter, r *http.Request) {
 	if a.backups == nil {
 		jsonError(w, http.StatusServiceUnavailable, "runtime_unavailable", "Backups não estão disponíveis.")
@@ -31,6 +57,19 @@ func (a *app) backupRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.backups.route(w, r)
+}
+
+func (a *app) backupSettingsRoute(w http.ResponseWriter, r *http.Request) {
+	if a.backups == nil {
+		jsonError(w, http.StatusServiceUnavailable, "runtime_unavailable", "Backups não estão disponíveis.")
+		return
+	}
+	userID, ok := r.Context().Value(userKey{}).(int64)
+	if !ok || !a.isAdmin(userID) {
+		jsonError(w, http.StatusForbidden, "forbidden", "Apenas administradores podem configurar backups.")
+		return
+	}
+	a.backups.settingsRoute(w, r)
 }
 
 func (a *app) isAdmin(userID int64) bool {
@@ -69,31 +108,101 @@ func (h *backupAPI) route(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *backupAPI) settingsRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		var schedule string
+		var retention int
+		if err := h.app.db.QueryRowContext(r.Context(), `SELECT schedule,retention FROM backup_settings WHERE id=1`).Scan(&schedule, &retention); err != nil {
+			jsonError(w, 500, "internal_error", "Não foi possível carregar as configurações de backup.")
+			return
+		}
+		writeJSON(w, map[string]any{"schedule": schedule, "retention": retention})
+		return
+	}
+	if r.Method != http.MethodPatch {
+		jsonError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Método não permitido.")
+		return
+	}
+	var input struct {
+		Schedule  string `json:"schedule"`
+		Retention int    `json:"retention"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if (input.Schedule != "manual" && input.Schedule != "daily" && input.Schedule != "weekly") || input.Retention < 1 || input.Retention > 100 {
+		jsonError(w, 422, "validation_failed", "Informe uma agenda manual, diária ou semanal e retenção entre 1 e 100.")
+		return
+	}
+	_, err := h.app.db.ExecContext(r.Context(), `UPDATE backup_settings SET schedule=?,retention=?,updated_at=? WHERE id=1`, input.Schedule, input.Retention, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		jsonError(w, 500, "internal_error", "Não foi possível salvar as configurações de backup.")
+		return
+	}
+	writeJSON(w, map[string]any{"schedule": input.Schedule, "retention": input.Retention})
+}
+
+func (h *backupAPI) scheduler(ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			h.runScheduled(ctx)
+		}
+	}
+}
+
+func (h *backupAPI) runScheduled(ctx context.Context) {
+	var schedule string
+	if h.app.db.QueryRowContext(ctx, `SELECT schedule FROM backup_settings WHERE id=1`).Scan(&schedule) != nil || schedule == "manual" {
+		return
+	}
+	var created string
+	if h.app.db.QueryRowContext(ctx, `SELECT created_at FROM backups WHERE kind='system' AND status='ready' ORDER BY created_at DESC LIMIT 1`).Scan(&created) == nil {
+		last, err := time.Parse(time.RFC3339Nano, created)
+		if err != nil {
+			return
+		}
+		age := time.Since(last)
+		if (schedule == "daily" && age < 24*time.Hour) || (schedule == "weekly" && age < 7*24*time.Hour) {
+			return
+		}
+	}
+	_, _ = h.createBackup(ctx)
+}
+
 func (h *backupAPI) create(w http.ResponseWriter, r *http.Request) {
-	if err := os.MkdirAll(filepath.Join(h.dataDir, "backups"), 0750); err != nil {
-		jsonError(w, 500, "backup_failed", "Não foi possível preparar o backup.")
-		return
-	}
-	now := time.Now().UTC()
-	path := filepath.Join(h.dataDir, "backups", "stackhost-"+now.Format("20060102-150405")+".tar.gz")
-	if err := h.writeArchive(r.Context(), path); err != nil {
-		jsonError(w, 500, "backup_failed", "Não foi possível criar o backup.")
-		return
-	}
-	info, err := os.Stat(path)
+	id, err := h.createBackup(r.Context())
 	if err != nil {
-		jsonError(w, 500, "backup_failed", "Não foi possível validar o backup.")
-		return
-	}
-	result, err := h.app.db.ExecContext(r.Context(), `INSERT INTO backups(kind,status,path,size_bytes,created_at) VALUES('system','ready',?,?,?)`, path, info.Size(), now.Format(time.RFC3339Nano))
-	if err != nil {
-		_ = os.Remove(path)
 		jsonError(w, 500, "backup_failed", "Não foi possível registrar o backup.")
 		return
 	}
-	id, _ := result.LastInsertId()
-	h.app.publish("backup.succeeded", map[string]any{"backup_id": id, "size_bytes": info.Size()})
 	h.getAndWrite(w, r.Context(), id)
+}
+
+func (h *backupAPI) prune(ctx context.Context) {
+	var retention int
+	if h.app.db.QueryRowContext(ctx, `SELECT retention FROM backup_settings WHERE id=1`).Scan(&retention) != nil || retention < 1 {
+		retention = 7
+	}
+	rows, err := h.app.db.QueryContext(ctx, `SELECT id,path FROM backups WHERE kind='system' AND status='ready' ORDER BY created_at DESC LIMIT -1 OFFSET ?`, retention)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var path string
+		if rows.Scan(&id, &path) == nil {
+			if filepath.Dir(path) == filepath.Join(h.dataDir, "backups") {
+				_ = os.Remove(path)
+			}
+			_, _ = h.app.db.ExecContext(ctx, `DELETE FROM backups WHERE id=?`, id)
+		}
+	}
 }
 
 func (h *backupAPI) writeArchive(ctx context.Context, destination string) error {

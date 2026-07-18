@@ -24,6 +24,7 @@ var migrations = []Migration{
 	{Version: 6, Name: "backups", Up: backups},
 	{Version: 7, Name: "runtime_metrics", Up: runtimeMetrics},
 	{Version: 8, Name: "notifications", Up: notifications},
+	{Version: 9, Name: "backup_settings", Up: backupSettings},
 }
 
 // Run applies every pending migration in version order.
@@ -307,5 +308,18 @@ func notifications(ctx context.Context, tx *sql.Tx) error {
 			updated_at TEXT NOT NULL
 		);
 	`)
+	return err
+}
+
+func backupSettings(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS backup_settings (
+			id INTEGER PRIMARY KEY CHECK(id=1),
+			schedule TEXT NOT NULL DEFAULT 'manual',
+			retention INTEGER NOT NULL DEFAULT 7,
+			updated_at TEXT NOT NULL
+		);
+		INSERT OR IGNORE INTO backup_settings(id,schedule,retention,updated_at) VALUES(1,'manual',7,?);
+	`, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
