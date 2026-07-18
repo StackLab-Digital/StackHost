@@ -55,15 +55,6 @@ function deploymentStatusClass(status: string) {
   if (["queued", "preparing", "deploying", "waiting"].includes(status)) return "pending";
   return "neutral";
 }
-function backupStatusLabel(status: string) {
-  return ({ ready: "Pronto", failed: "Falhou", running: "Em execução", pending: "Aguardando" } as Record<string, string>)[status] || status || "Indisponível";
-}
-function backupStatusClass(status: string) {
-  if (status === "ready") return "success";
-  if (status === "failed") return "error";
-  if (["running", "pending"].includes(status)) return "pending";
-  return "neutral";
-}
 const userName = ref("Administrador");
 async function load(silent = false) {
   if (refreshing) return;
@@ -212,12 +203,6 @@ onUnmounted(() => {
         </p>
       </div>
       <span class="pill">{{ overallMessage }}</span>
-    </section>
-    <section v-if="data.applications" class="grid metrics operational-cards">
-      <RouterLink class="panel operational-card" to="/applications"><span class="label">APLICAÇÕES</span><strong>{{ data.applications.total }}</strong><span>{{ data.applications.running || 0 }} em execução · {{ data.applications.degraded || 0 }} degradadas</span></RouterLink>
-      <RouterLink class="panel operational-card" to="/applications"><span class="label">DEPLOYS</span><strong>{{ data.deployments?.running || 0 }}</strong><span>{{ data.deployments?.failed_last_24h || 0 }} falhos em 24h</span></RouterLink>
-      <RouterLink class="panel operational-card" to="/applications"><span class="label">DOMÍNIOS</span><strong>{{ data.domains?.active || 0 }}</strong><span>{{ data.domains?.pending || 0 }} pendentes · {{ data.domains?.errors || 0 }} com erro</span></RouterLink>
-      <RouterLink class="panel operational-card" to="/settings"><span class="label">BACKUPS</span><strong><span class="deploy-badge" :class="backupStatusClass(data.backups?.last_status)">{{ backupStatusLabel(data.backups?.last_status) }}</span></strong><span>{{ data.backups?.last_created_at ? new Date(data.backups.last_created_at).toLocaleString("pt-BR") : "Nenhum backup registrado" }}</span></RouterLink>
     </section>
     <section v-if="data.alerts?.length" class="panel panel-section operational-alerts">
       <div class="section-head"><div><p class="kicker">ATENÇÃO</p><h2>Alertas operacionais</h2></div></div>
@@ -389,10 +374,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.operational-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
-.operational-card { display: grid; gap: 8px; color: inherit; text-decoration: none; }
-.operational-card strong { font-size: 28px; }
-.operational-card span:last-child, .alert-row span { color: var(--muted, #858b99); font-size: 13px; }
+.alert-row span { color: var(--muted, #858b99); font-size: 13px; }
 .operational-alerts, .resource-health { display: grid; gap: 12px; margin-top: 14px; }
 .alert-row { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid #2a2d34; color: inherit; text-decoration: none; }
 .deploy-meta { display: inline-flex; align-items: center; gap: 12px; }
@@ -404,6 +386,6 @@ onUnmounted(() => {
 .resource-bars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .resource-bars > div { display: grid; gap: 6px; }
 .resource-bars span { color: var(--muted, #858b99); font-size: 12px; }
-@media (max-width: 800px) { .operational-cards, .resource-bars { grid-template-columns: 1fr 1fr; } .alert-row { display: grid; gap: 4px; } .deploy-meta { justify-content: space-between; } }
-@media (max-width: 480px) { .operational-cards, .resource-bars { grid-template-columns: 1fr; } }
+@media (max-width: 800px) { .resource-bars { grid-template-columns: 1fr 1fr; } .alert-row { display: grid; gap: 4px; } .deploy-meta { justify-content: space-between; } }
+@media (max-width: 480px) { .resource-bars { grid-template-columns: 1fr; } }
 </style>
