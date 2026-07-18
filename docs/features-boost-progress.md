@@ -28,7 +28,7 @@ Cinco arquivos já possuíam alterações locais antes do início desta execuç�
 
 Baseline validado: `go test ./...`, `go vet ./...`, typecheck, lint, 14 testes frontend, build web e build da imagem baseline. No navegador, uma instância isolada concluiu onboarding, criação de projeto, validação Compose e criação de aplicação.
 
-O build Docker pós-correções e a segunda passagem no navegador não puderam ser executados porque o ambiente recusou novas autorizações por limite externo de uso. O build Docker baseline havia passado antes das correções; os builds Go e web e as suítes diretamente relacionadas passaram depois das correções.
+O build Docker pós-correções passou com a imagem `stackhost:features-boost`. Uma instância temporária aplicou as oito migrations, respondeu a `/health/live`, `/health/ready`, `/api/v1/setup/status` e entregou a SPA em smoke test. A validação completa no navegador interativo ainda não foi repetida.
 
 ## Decisões técnicas
 
@@ -43,18 +43,18 @@ O build Docker pós-correções e a segunda passagem no navegador não puderam s
 
 ## Pendências reais
 
-- Executar o build Docker pós-Fase 0 e repetir a validação no navegador quando o ambiente voltar a autorizar Docker.
-- Registrar commits e fazer push das alterações posteriores a `44c6ade`; a tentativa mais recente ainda falhou em `.git/index.lock` com `Operation not permitted`, por limite externo de autorização, sem relação com o código.
+- Repetir a validação completa no navegador interativo quando necessário; o build Docker e o smoke HTTP já passaram.
+- Commits e push concluídos na branch `features-boost`: `86c6cf2` e `d4e462c`.
 - ESLint agora possui configuração flat efetiva para arquivos JavaScript; cobertura específica de Vue/TypeScript depende da adição futura dos parsers/plugins correspondentes.
 - Remover ou alinhar os arquivos SQL legados de `migrations/`, que não são consumidos pelo binário.
 - A leitura de runtime da aplicação agora usa `internal/docker.Reader.RuntimeSnapshot`; o motor assíncrono já não herda `os.Environ()` nem depende de comandos espalhados nos handlers.
 - Manifestos Docker/Swarm agora usam filesystem somente leitura, `/tmp` limitado e `no-new-privileges`; o socket continua exigindo acesso efetivo de escrita para operar workloads e permanece um risco explícito de host.
-- `go test ./...`, `go vet ./...` e `go mod verify` passaram integralmente antes do último teste de duplicação; após adicionar esse teste, os pacotes internos continuam verdes, mas `cmd/stackhost`/agregador voltaram a encontrar `operation not permitted` no mesmo artefato do cache externo.
+- `go test ./...`, `go vet ./...` e `go mod verify` passaram após alinhar as dependências Go.
 - O runtime agora expõe health real do Docker SDK (`healthy`, `starting`, `unhealthy`, `no_healthcheck`) e uma amostra de métricas locais Docker (`/api/v1/applications/:id/metrics`) com retenção de 24 horas e UI resumida. Swarm permanece explicitamente `unknown` para métricas não locais. Notificações têm configuração protegida, teste de webhook, UI e entrega assíncrona para eventos publicados. Aplicações podem ser duplicadas preservando a origem criptografada e iniciando como `not_deployed`.
 - Backup local do sistema entregue em `POST/GET /api/v1/backups/system`, com SQLite via `VACUUM INTO`, certificados persistidos em tar.gz, download e remoção protegidos por admin, além de controles básicos em Configurações. Destinos S3 e agendamento continuam pendentes.
 
 ## Último commit validado
 
-`44c6ade` — correção preexistente preservada e validada na `features-boost`.
+`d4e462c` — dependências Go alinhadas após validação completa; publicado em `origin/features-boost`.
 
-Última validação de código: `gofmt`, `git diff --check`, lint, typecheck, 14 testes frontend, build web, `go vet`/testes dos pacotes internos e `go mod verify` verdes; a suíte `cmd/stackhost` após o teste de duplicação está bloqueada pelo cache externo. Commits/push posteriores permanecem bloqueados pela autorização do ambiente.
+Última validação de código: `gofmt`, `git diff --check`, lint, typecheck, 14 testes frontend, build web, `go test ./...`, `go vet ./...`, `go mod verify`, build Docker e smoke HTTP da imagem verdes. A branch foi publicada e permanece sem merge em `develop`.
