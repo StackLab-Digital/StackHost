@@ -22,13 +22,13 @@ const emit = defineEmits<{ "update:modelValue": [value: boolean] }>();
 
 <style scoped>
 .checkbox-control {
-  display: inline-flex;
-  align-items: center;
+  display: inline-flex !important;
+  align-items: center !important;
   gap: 8px;
   margin: 0;
-  color: #b9bec9;
+  color: #b9bec9 !important;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 14px !important;
   line-height: 1.2;
 }
 .checkbox-control.disabled { cursor: not-allowed; opacity: 0.55; }
