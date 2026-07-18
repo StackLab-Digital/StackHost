@@ -40,7 +40,12 @@ func (h *deploymentAPI) logsRoute(w http.ResponseWriter, r *http.Request, applic
 		return
 	}
 	tail := 100
-	if value, parseErr := strconv.Atoi(r.URL.Query().Get("tail")); parseErr == nil && value > 0 {
+	if raw := r.URL.Query().Get("tail"); raw != "" {
+		value, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || (value != 100 && value != 500 && value != 1000) {
+			jsonError(w, http.StatusBadRequest, "invalid_tail", "Escolha 100, 500 ou 1000 linhas.")
+			return
+		}
 		tail = value
 	}
 	logs, err := reader.Logs(r.Context(), request, service, tail)

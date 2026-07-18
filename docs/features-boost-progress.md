@@ -52,6 +52,7 @@ O build Docker pós-correções passou com a imagem `stackhost:features-boost`. 
 - `go test ./...`, `go vet ./...` e `go mod verify` passaram após alinhar as dependências Go.
 - O runtime agora expõe health real do Docker SDK (`healthy`, `starting`, `unhealthy`, `no_healthcheck`) e uma amostra de métricas locais Docker (`/api/v1/applications/:id/metrics`) com retenção de 24 horas e UI resumida. Swarm permanece explicitamente `unknown` para métricas não locais. Notificações têm configuração protegida, teste de webhook, UI e entrega assíncrona para eventos publicados. Aplicações podem ser duplicadas preservando a origem criptografada e iniciando como `not_deployed`.
 - Backup local do sistema entregue em `POST/GET /api/v1/backups/system`, com SQLite via `VACUUM INTO`, certificados persistidos em tar.gz, download e remoção protegidos por admin, controles em Configurações, retenção e scheduler interno manual/diário/semanal. Destinos S3 continuam pendentes.
+- Ajuste incremental da fase de logs: `tail` agora aceita somente 100, 500 ou 1000; o viewer ganhou busca local, auto-scroll, cópia, download, limpeza visual e indicador de conexão.
 
 ## Último commit validado
 

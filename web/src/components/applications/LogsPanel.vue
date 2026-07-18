@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { api } from "../../composables/useApi";
 import { useToast } from "../../composables/useToast";
 
@@ -11,6 +11,10 @@ const tail = ref(100);
 const logs = ref("");
 const loading = ref(false);
 const following = ref(false);
+const query = ref("");
+const autoScroll = ref(true);
+const connected = ref(false);
+const viewer = ref<HTMLElement>();
 let events: EventSource | undefined;
 
 async function loadServices() {
@@ -23,23 +27,25 @@ async function loadServices() {
 async function loadLogs() {
   if (!service.value) return;
   loading.value = true;
-	try { const result = await api<{ logs: string }>(`/api/v1/applications/${props.applicationId}/logs?service=${encodeURIComponent(service.value)}&tail=${tail.value}`); logs.value = result.logs || ""; }
+	try { const result = await api<{ logs: string }>(`/api/v1/applications/${props.applicationId}/logs?service=${encodeURIComponent(service.value)}&tail=${tail.value}`); logs.value = result.logs || ""; await nextTick(); if (autoScroll.value && viewer.value) viewer.value.scrollTop = viewer.value.scrollHeight; }
   catch (error) { toast.error(error instanceof Error ? error.message : "Não foi possível carregar os logs."); }
   finally { loading.value = false; }
 }
-function stopFollowing() { following.value = false; events?.close(); events = undefined; }
+function stopFollowing() { following.value = false; connected.value = false; events?.close(); events = undefined; }
 function toggleFollowing() {
   if (following.value) { stopFollowing(); return; }
   if (!service.value) return;
   events = new EventSource(`/api/v1/applications/${props.applicationId}/logs/stream?service=${encodeURIComponent(service.value)}`);
   events.onmessage = (event) => {
-    try { const payload = JSON.parse(event.data) as { line?: string }; if (payload.line !== undefined) logs.value += `${logs.value ? "\n" : ""}${payload.line}`; }
+    try { const payload = JSON.parse(event.data) as { line?: string }; if (payload.line !== undefined) { logs.value += `${logs.value ? "\n" : ""}${payload.line}`; void nextTick(() => { if (autoScroll.value && viewer.value) viewer.value.scrollTop = viewer.value.scrollHeight; }); } }
     catch { /* ignore malformed frames */ }
   };
-  events.onerror = stopFollowing;
+  events.onopen = () => { connected.value = true; };
+  events.onerror = () => { connected.value = false; };
   following.value = true;
 }
 async function copyLogs() { await navigator.clipboard?.writeText(logs.value); toast.info("Logs copiados."); }
+function downloadLogs() { const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([logs.value], { type: "text/plain" })); link.download = `${service.value || "logs"}.txt`; link.click(); URL.revokeObjectURL(link.href); }
 watch(() => props.applicationId, async () => { stopFollowing(); logs.value = ""; await loadServices(); await loadLogs(); });
 watch(service, () => void loadLogs());
 onMounted(async () => { await loadServices(); await loadLogs(); });
@@ -48,9 +54,9 @@ onUnmounted(stopFollowing);
 
 <template>
   <section class="logs-panel">
-    <div class="section-head"><div><p class="kicker">LOGS</p><h2>Saída operacional</h2><p class="muted">Acompanhe o serviço sem expor containers arbitrários.</p></div><div class="log-actions"><button class="ghost" type="button" :disabled="!logs" @click="copyLogs">Copiar</button><button class="secondary" type="button" :class="{ active: following }" @click="toggleFollowing">{{ following ? "Pausar" : "Acompanhar" }}</button></div></div>
-    <div class="logs-toolbar"><label>Serviço<select v-model="service"><option v-for="item in services" :key="item" :value="item">{{ item }}</option></select></label><label>Linhas<select v-model.number="tail"><option :value="100">100</option><option :value="500">500</option><option :value="1000">1000</option></select></label><button class="ghost" type="button" @click="loadLogs">Atualizar</button></div>
-    <pre class="logs-viewer" :aria-busy="loading">{{ logs || "Nenhum log disponível para este serviço." }}</pre>
+    <div class="section-head"><div><p class="kicker">LOGS</p><h2>Saída operacional</h2><p class="muted">{{ connected ? "Conectado em tempo real" : "Histórico do serviço" }}</p></div><div class="log-actions"><button class="ghost" type="button" :disabled="!logs" @click="copyLogs">Copiar</button><button class="ghost" type="button" :disabled="!logs" @click="downloadLogs">Baixar</button><button class="ghost" type="button" :disabled="!logs" @click="logs = ''">Limpar</button><button class="secondary" type="button" :class="{ active: following }" @click="toggleFollowing">{{ following ? "Pausar" : "Acompanhar" }}</button></div></div>
+    <div class="logs-toolbar"><label>Serviço<select v-model="service"><option v-for="item in services" :key="item" :value="item">{{ item }}</option></select></label><label>Linhas<select v-model.number="tail"><option :value="100">100</option><option :value="500">500</option><option :value="1000">1000</option></select></label><label>Buscar<input v-model="query" type="search" placeholder="Filtrar linhas" /></label><label class="checkbox"><input v-model="autoScroll" type="checkbox" /> Auto-scroll</label><button class="ghost" type="button" @click="loadLogs">Atualizar</button></div>
+    <pre ref="viewer" class="logs-viewer" :aria-busy="loading">{{ (logs.split("\n").filter((line) => !query || line.toLowerCase().includes(query.toLowerCase())).join("\n")) || "Nenhum log disponível para este serviço." }}</pre>
   </section>
 </template>
 
