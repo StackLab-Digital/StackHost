@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	eventhub "github.com/StackLab-Digital/StackHost/internal/events"
+	"github.com/StackLab-Digital/StackHost/internal/migrations"
 	"github.com/StackLab-Digital/StackHost/internal/secure"
 )
 
@@ -18,12 +20,13 @@ func testApp(t *testing.T) *app {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := migrate(db); err != nil {
+	db.SetMaxOpenConns(1)
+	if err := migrations.Run(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
 	cipher, _ := secure.New("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	return &app{db: db, sessionSecret: "test", cipher: cipher, events: make(chan map[string]any, 4), loginAttempts: make(map[string]attempt)}
+	return &app{db: db, sessionSecret: "test", cipher: cipher, events: eventhub.New(4), loginAttempts: make(map[string]attempt)}
 }
 
 func TestOnboardingAndSession(t *testing.T) {
@@ -42,6 +45,25 @@ func TestOnboardingAndSession(t *testing.T) {
 	a.setupAdmin(w, httptest.NewRequest(http.MethodPost, "/api/v1/setup/admin", strings.NewReader(`{"name":"Other","email":"other@example.com","password":"password123"}`)))
 	if w.Code != http.StatusConflict {
 		t.Fatalf("second setup status = %d", w.Code)
+	}
+}
+
+func TestMeUsesLowercaseJSONFields(t *testing.T) {
+	a := testApp(t)
+	_, _ = a.db.Exec("INSERT INTO users(id,name,email,password_hash,role,created_at,updated_at) VALUES(1,'Admin','admin@example.com','hash','admin','now','now')")
+	w := httptest.NewRecorder()
+	a.me(w, httptest.NewRequest(http.MethodGet, "/api/v1/me", nil).WithContext(context.WithValue(context.Background(), userKey{}, int64(1))))
+	var payload map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"id", "name", "email", "role"} {
+		if _, ok := payload[key]; !ok {
+			t.Fatalf("missing lowercase field %q: %#v", key, payload)
+		}
+	}
+	if _, ok := payload["Name"]; ok {
+		t.Fatalf("unexpected uppercase fields: %#v", payload)
 	}
 }
 
@@ -71,6 +93,94 @@ func TestProjectAndApplicationPersistence(t *testing.T) {
 	var projects []map[string]any
 	if err := json.NewDecoder(list.Body).Decode(&projects); err != nil || len(projects) != 1 {
 		t.Fatalf("projects list = %#v, err=%v", projects, err)
+	}
+}
+
+func TestProjectsHandlesQueryFailure(t *testing.T) {
+	a := testApp(t)
+	_ = a.db.Close()
+	w := httptest.NewRecorder()
+	a.projects(w, httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil))
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), `"code":"internal_error"`) {
+		t.Fatalf("projects failure = %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestApplicationCreationPersistsRuntimeAndConfigurationState(t *testing.T) {
+	a := testApp(t)
+	_, _ = a.db.Exec("INSERT INTO projects(id,name,slug,status,created_at,updated_at) VALUES(1,'Demo','demo','active','now','now')")
+	tests := []struct {
+		name            string
+		applicationName string
+		body            string
+		configuration   string
+		revision        int
+		hasConfiguredAt bool
+	}{
+		{name: "configured", applicationName: "Web", body: `{"name":"Web","source_type":"compose","source":{"compose_yaml":"services:\n  web:\n    image: nginx:alpine"}}`, configuration: "configured", revision: 1, hasConfiguredAt: true},
+		{name: "draft", applicationName: "Draft", body: `{"name":"Draft","source_type":"compose","save_as_draft":true,"source":{}}`, configuration: "draft", revision: 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			a.applications(w, httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/applications", strings.NewReader(test.body)), 1)
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"status":"not_deployed"`) {
+				t.Fatalf("create application = %d %s", w.Code, w.Body.String())
+			}
+			var status, configuration string
+			var configuredAt, validatedAt sql.NullString
+			var revision int
+			if err := a.db.QueryRow("SELECT status,configuration_status,source_revision,configured_at,last_validated_at FROM applications WHERE name=?", test.applicationName).Scan(&status, &configuration, &revision, &configuredAt, &validatedAt); err != nil {
+				t.Fatal(err)
+			}
+			if status != "not_deployed" || configuration != test.configuration || revision != test.revision || configuredAt.Valid != test.hasConfiguredAt || validatedAt.Valid != test.hasConfiguredAt {
+				t.Fatalf("persisted state = status:%s configuration:%s revision:%d configured:%v validated:%v", status, configuration, revision, configuredAt.Valid, validatedAt.Valid)
+			}
+		})
+	}
+}
+
+func TestApplicationListSeparatesRuntimeAndConfigurationState(t *testing.T) {
+	a := testApp(t)
+	_, _ = a.db.Exec("INSERT INTO projects(id,name,slug,status,created_at,updated_at) VALUES(1,'Demo','demo','active','now','now')")
+	_, _ = a.db.Exec("INSERT INTO applications(id,project_id,name,slug,source_type,status,configuration_status,created_at,updated_at) VALUES(1,1,'Web','web','compose','not_deployed','configured','now','now')")
+	w := httptest.NewRecorder()
+	a.applications(w, httptest.NewRequest(http.MethodGet, "/api/v1/projects/1/applications", nil), 1)
+	var items []struct {
+		Status              string `json:"status"`
+		ConfigurationStatus string `json:"configuration_status"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&items); err != nil || len(items) != 1 {
+		t.Fatalf("applications = %#v, err=%v", items, err)
+	}
+	if items[0].Status != "not_deployed" || items[0].ConfigurationStatus != "configured" {
+		t.Fatalf("application states = %#v", items[0])
+	}
+}
+
+func TestApplicationDuplicationPreservesEncryptedSource(t *testing.T) {
+	a := testApp(t)
+	_, _ = a.db.Exec("INSERT INTO users(id,name,email,password_hash,role,created_at,updated_at) VALUES(1,'Admin','admin@example.com','hash','admin','now','now')")
+	_, _ = a.db.Exec("INSERT INTO projects(id,name,slug,status,created_at,updated_at) VALUES(1,'Demo','demo','active','now','now')")
+	_, _ = a.db.Exec("INSERT INTO applications(id,project_id,name,description,slug,source_type,status,configuration_status,source_revision,created_at,updated_at) VALUES(1,1,'Web','demo app','web','compose','not_deployed','configured',2,'now','now')")
+	_, _ = a.db.Exec("INSERT INTO application_sources(application_id,source_type,encrypted_payload,encryption_nonce,payload_version,checksum,validation_status,validation_errors,validation_warnings,summary_json,created_at,updated_at) VALUES(1,'compose',X'01',X'02',1,'checksum','configured','[]','[]','{}','now','now')")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/applications/1/duplicate", nil).WithContext(context.WithValue(context.Background(), userKey{}, int64(1)))
+	w := httptest.NewRecorder()
+	a.applicationRouteV2(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("duplicate status = %d %s", w.Code, w.Body.String())
+	}
+	var newID int64
+	if err := a.db.QueryRow("SELECT id FROM applications WHERE id<>1").Scan(&newID); err != nil {
+		t.Fatal(err)
+	}
+	var sourceRevision int
+	var payload []byte
+	if err := a.db.QueryRow("SELECT source_revision FROM applications WHERE id=?", newID).Scan(&sourceRevision); err != nil || sourceRevision != 2 {
+		t.Fatalf("copied revision = %d, err=%v", sourceRevision, err)
+	}
+	if err := a.db.QueryRow("SELECT encrypted_payload FROM application_sources WHERE application_id=?", newID).Scan(&payload); err != nil || len(payload) != 1 || payload[0] != 1 {
+		t.Fatalf("copied source = %x, err=%v", payload, err)
 	}
 }
 
@@ -112,6 +222,22 @@ func TestHealthEndpoints(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("%s status = %d", path, w.Code)
 		}
+	}
+}
+
+func TestReadinessRejectsMigrationGap(t *testing.T) {
+	a := testApp(t)
+	if _, err := a.db.Exec("DELETE FROM schema_migrations WHERE version=2"); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	a.ready(w, httptest.NewRequest(http.MethodGet, "/health/ready", nil))
+	var payload map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Content-Type") != "application/json" || payload["status"] != "not_ready" || payload["reason"] != "migrations" {
+		t.Fatalf("readiness = %d %#v %#v", w.Code, w.Header(), payload)
 	}
 }
 
@@ -218,6 +344,32 @@ func TestApplicationSourceIsEncryptedAndSecretsAreMasked(t *testing.T) {
 	var encrypted string
 	if err := a.db.QueryRow("SELECT hex(encrypted_payload) FROM application_sources WHERE application_id=1").Scan(&encrypted); err != nil || strings.Contains(encrypted, "top-secret") {
 		t.Fatalf("encrypted payload invalid: %v", err)
+	}
+}
+
+func TestChangeApplicationSourceRollsBackOnUpdateFailure(t *testing.T) {
+	a := testApp(t)
+	_, _ = a.db.Exec("INSERT INTO projects(id,name,slug,status,created_at,updated_at) VALUES(1,'Demo','demo','active','now','now')")
+	_, _ = a.db.Exec("INSERT INTO applications(id,project_id,name,slug,source_type,status,configuration_status,source_revision,created_at,updated_at) VALUES(1,1,'Web','web','compose','not_deployed','configured',1,'now','now')")
+	_, _ = a.db.Exec("INSERT INTO application_sources(application_id,source_type,encrypted_payload,encryption_nonce,checksum,validation_status,created_at,updated_at) VALUES(1,'compose',X'01',X'02','checksum','configured','now','now')")
+	if _, err := a.db.Exec("CREATE TRIGGER fail_source_change BEFORE UPDATE OF source_type ON applications BEGIN SELECT RAISE(ABORT, 'forced update failure'); END"); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	a.changeApplicationSource(w, httptest.NewRequest(http.MethodPost, "/api/v1/applications/1/source/change", strings.NewReader(`{"source_type":"image","confirm_reset":true}`)), 1)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("source change status = %d", w.Code)
+	}
+	var sourceType string
+	var revision, sources int
+	if err := a.db.QueryRow("SELECT source_type,source_revision FROM applications WHERE id=1").Scan(&sourceType, &revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.QueryRow("SELECT count(*) FROM application_sources WHERE application_id=1").Scan(&sources); err != nil {
+		t.Fatal(err)
+	}
+	if sourceType != "compose" || revision != 1 || sources != 1 {
+		t.Fatalf("source change was partially persisted: type=%s revision=%d sources=%d", sourceType, revision, sources)
 	}
 }
 

@@ -3,7 +3,10 @@ import { computed, onMounted, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import BaseModal from "../components/ui/BaseModal.vue";
 import ComposeCodeEditor from "../components/applications/ComposeCodeEditor.vue";
+import DomainsPanel from "../components/applications/DomainsPanel.vue";
+import DeploymentTimeline from "../components/applications/DeploymentTimeline.vue";
 import EnvironmentVariablesEditor from "../components/applications/EnvironmentVariablesEditor.vue";
+import LogsPanel from "../components/applications/LogsPanel.vue";
 import { api, RequestError } from "../composables/useApi";
 import { useToast } from "../composables/useToast";
 
@@ -45,6 +48,24 @@ type Validation = {
     environment_variables?: Array<{ name: string; default_value?: string; required?: boolean; secret?: boolean; services?: string[] }>;
   };
 };
+type Runtime = {
+  mode: string;
+  status: string;
+  services: Array<{
+    name: string;
+    image: string;
+    desired: number;
+    running: number;
+    failed: number;
+    health?: string;
+  }>;
+};
+type Metrics = {
+  available: boolean;
+  runtime_mode: string;
+  current: Array<{ service: string; cpu_percent: number; memory_bytes: number; memory_limit_bytes: number }>;
+  history: Array<{ service: string; cpu_percent: number; memory_bytes: number; recorded_at: string }>;
+};
 
 const route = useRoute();
 const router = useRouter();
@@ -74,7 +95,9 @@ const dockerfilePath = ref("Dockerfile");
 const buildContext = ref(".");
 const variables = ref<Variable[]>([]);
 const detectedVariables = ref<NonNullable<Validation["summary"]["environment_variables"]>>([]);
-const runtime = ref<{ mode: string; status: string; services: Array<{ name: string; image: string; desired: number; running: number; failed: number }> } | null>(null);
+const runtime = ref<Runtime | null>(null);
+const metrics = ref<Metrics | null>(null);
+const deploymentsRefreshKey = ref(0);
 const sourceTypes = [
   { value: "compose", label: "Docker Compose" },
   { value: "image", label: "Imagem Docker" },
@@ -101,7 +124,8 @@ async function load() {
     );
     detectedVariables.value = application.value.source_summary?.environment_variables || [];
     await loadSource();
-    runtime.value = await api<typeof runtime.value>(`/api/v1/applications/${route.params.applicationId}/runtime`);
+    runtime.value = await api<Runtime>(`/api/v1/applications/${route.params.applicationId}/runtime`);
+    metrics.value = await api<Metrics>(`/api/v1/applications/${route.params.applicationId}/metrics`).catch(() => null);
   } catch (err) {
     error.value =
       err instanceof Error
@@ -201,8 +225,11 @@ async function validateSource() {
   saving.value = true;
   try {
     validation.value = await api<Validation>(
-      `/api/v1/applications/${application.value?.id}/source/validate`,
-      { method: "POST" },
+      "/api/v1/source/validate",
+      {
+        method: "POST",
+        body: JSON.stringify({ source_type: sourceType.value, source: payload() }),
+      },
     );
     toast[validation.value.valid ? "success" : "error"](
       validation.value.valid
@@ -217,11 +244,40 @@ async function validateSource() {
     saving.value = false;
   }
 }
+async function runtimeAction(operation: "start" | "stop" | "restart" | "remove") {
+  const destructive = operation === "stop" || operation === "remove";
+  if (destructive && !window.confirm(operation === "remove" ? "Remover a publicação do Docker? A aplicação continuará no StackHost." : "Parar esta publicação agora?")) return;
+  try {
+    await api(`/api/v1/applications/${route.params.applicationId}/${operation === "remove" ? "runtime" : `actions/${operation}`}`, { method: operation === "remove" ? "DELETE" : "POST" });
+    toast.success(operation === "remove" ? "Publicação removida." : "Ação enviada ao runtime.");
+    await load();
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "Não foi possível alterar o runtime.");
+  }
+}
+async function duplicateApplication() {
+  try {
+    const copy = await api<{ id: number }>(`/api/v1/applications/${route.params.applicationId}/duplicate`, { method: "POST" });
+    toast.success("Cópia criada.");
+    router.push(`/applications/${copy.id}`);
+  } catch (err) { toast.error(err instanceof Error ? err.message : "Não foi possível duplicar a aplicação."); }
+}
 async function publishApplication() {
   const mode = runtime.value?.mode === "swarm" ? "Docker Swarm" : "Docker em servidor único";
   if (!window.confirm(`Publicar aplicação?\n\nModo: ${mode}\nProjeto: ${application.value?.slug || application.value?.name || "aplicação"}`)) return;
   publishing.value = true;
-  try { await api(`/api/v1/applications/${route.params.applicationId}/deploy`, { method: "POST" }); toast.success("Aplicação publicada."); await load(); }
+  try {
+    await api(
+      `/api/v1/applications/${route.params.applicationId}/deployments`,
+      {
+        method: "POST",
+        body: JSON.stringify({ source_revision: application.value?.source_revision }),
+      },
+    );
+    deploymentsRefreshKey.value += 1;
+    toast.success("Publicação enfileirada. Acompanhe o progresso em Deploys.");
+    setTab("deployments");
+  }
   catch (err) { toast.error(err instanceof Error ? err.message : "Não foi possível publicar a aplicação."); }
   finally { publishing.value = false; }
 }
@@ -257,7 +313,12 @@ function setTab(value: string) {
     query: { ...route.query, tab: value === "overview" ? undefined : value },
   });
 }
-watch(() => route.params.applicationId, load);
+watch(
+  () => route.params.applicationId,
+  () => {
+    void load();
+  },
+);
 watch(
   () => application.value?.name,
   (name) => {
@@ -265,7 +326,9 @@ watch(
   },
   { immediate: true },
 );
-onMounted(load);
+onMounted(() => {
+  void load();
+});
 </script>
 
 <template>
@@ -316,6 +379,9 @@ onMounted(load);
           { value: 'overview', label: 'Visão geral' },
           { value: 'source', label: 'Origem' },
           { value: 'variables', label: 'Variáveis' },
+          { value: 'domains', label: 'Domínios' },
+          { value: 'deployments', label: 'Deploys' },
+          { value: 'logs', label: 'Logs' },
           { value: 'activity', label: 'Atividade' },
         ]"
         :key="item.value"
@@ -360,6 +426,17 @@ onMounted(load);
           Configurar origem
         </button>
       </article>
+      <article class="panel full-width runtime-panel">
+        <p class="label">RUNTIME</p>
+        <h2>{{ runtime?.status || "unknown" }}</h2>
+        <div class="runtime-actions">
+          <button v-if="runtime?.status === 'stopped'" class="secondary" type="button" @click="runtimeAction('start')">Iniciar</button>
+          <button v-if="runtime?.status === 'running' || runtime?.status === 'degraded'" class="secondary" type="button" @click="runtimeAction('stop')">Parar</button>
+          <button v-if="runtime?.status === 'running' || runtime?.status === 'degraded'" class="secondary" type="button" @click="runtimeAction('restart')">Reiniciar</button>
+          <button v-if="runtime?.status === 'running' || runtime?.status === 'stopped' || runtime?.status === 'degraded'" class="ghost" type="button" @click="runtimeAction('remove')">Remover publicação</button>
+          <button class="ghost" type="button" @click="duplicateApplication">Duplicar aplicação</button>
+        </div>
+      </article>
       <article class="panel full-width">
         <p class="label">RESUMO VALIDADO</p>
         <div v-if="validation" class="summary-grid compact">
@@ -389,7 +466,12 @@ onMounted(load);
         <p class="label">PUBLICAÇÃO</p>
         <h2>{{ runtime.status === "running" ? "Aplicação em execução" : "Ainda não publicada" }}</h2>
         <p class="muted">Modo: {{ runtime.mode === "swarm" ? "Docker Swarm" : "Docker em servidor único" }}</p>
-        <div v-if="runtime.services.length" class="summary-grid compact"><div v-for="service in runtime.services" :key="service.name"><span>{{ service.name }}</span><strong>{{ service.running }}/{{ service.desired }}</strong><small>{{ service.image }}</small></div></div>
+        <div v-if="runtime.services.length" class="summary-grid compact"><div v-for="service in runtime.services" :key="service.name"><span>{{ service.name }}</span><strong>{{ service.running }}/{{ service.desired }}</strong><small>{{ service.image }}</small><small v-if="service.health">Health: {{ service.health }}</small></div></div>
+      </article>
+      <article v-if="metrics?.available && metrics.current.length" class="panel full-width">
+        <p class="label">MÉTRICAS LOCAIS</p>
+        <p class="muted">Amostra atual do Docker neste host · retenção de 24 horas.</p>
+        <div class="summary-grid compact"><div v-for="metric in metrics.current" :key="metric.service"><span>{{ metric.service }}</span><strong>{{ metric.cpu_percent.toFixed(1) }}% CPU</strong><small>{{ Math.round(metric.memory_bytes / 1048576) }} MB de memória</small></div></div>
       </article>
     </section>
     <section v-else-if="tab === 'source'" class="source-editor">
@@ -498,6 +580,22 @@ onMounted(load);
       </div>
       <EnvironmentVariablesEditor v-model="variables" :detected="detectedVariables" />
     </section>
+    <DomainsPanel
+      v-else-if="tab === 'domains'"
+      :application-id="application.id"
+      :services="runtime?.services.map((service) => service.name) || []"
+    />
+    <DeploymentTimeline
+      v-else-if="tab === 'deployments'"
+      :application-id="application.id"
+      :publishing="publishing"
+      :refresh-key="deploymentsRefreshKey"
+      @publish="publishApplication"
+    />
+    <LogsPanel
+      v-else-if="tab === 'logs'"
+      :application-id="application.id"
+    />
     <section v-else class="activity-list">
       <article
         v-for="item in application.activity"
@@ -564,3 +662,270 @@ onMounted(load);
     ></BaseModal
   >
 </template>
+
+<style scoped>
+.runtime-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.deployments-section {
+  display: grid;
+  gap: 20px;
+}
+.deployments-head {
+  align-items: center;
+  margin-bottom: 0;
+}
+.deployments-head h2 {
+  margin-top: 0;
+}
+.deployments-head p {
+  margin: 6px 0 0;
+}
+.deployment-loading {
+  overflow: hidden;
+  border: 1px solid #2a2d34;
+  border-radius: 10px;
+  background: #17191e;
+}
+.deployment-skeleton {
+  display: grid;
+  gap: 12px;
+  padding: 22px;
+  border-bottom: 1px solid #2a2d34;
+}
+.deployment-skeleton:last-child {
+  border-bottom: 0;
+}
+.deployment-skeleton .skeleton {
+  max-width: 340px;
+}
+.deployment-skeleton .short {
+  max-width: 210px;
+  height: 14px;
+}
+.deployment-empty {
+  margin: 0;
+  padding: 48px 20px;
+}
+.deployment-inline-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid #633c42;
+  border-radius: 8px;
+  background: #2a1c20;
+  color: #efb3b3;
+  font-size: 13px;
+}
+.deployment-inline-error .ghost {
+  flex: 0 0 auto;
+}
+.deployment-timeline {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.deployment-timeline > li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 12px;
+}
+.deployment-rail {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+.deployment-rail::after {
+  position: absolute;
+  top: 27px;
+  bottom: -17px;
+  width: 1px;
+  background: #343842;
+  content: "";
+}
+.deployment-timeline > li:last-child .deployment-rail::after {
+  display: none;
+}
+.deployment-marker {
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  margin-top: 21px;
+  border-radius: 50%;
+  background: #858b99;
+  outline: 5px solid #101114;
+}
+.deployment-entry {
+  min-width: 0;
+  padding: 18px 20px;
+  border: 1px solid #2a2d34;
+  border-radius: 10px;
+  background: #17191e;
+}
+.deployment-entry-head,
+.deployment-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.deployment-entry-head {
+  justify-content: space-between;
+}
+.deployment-entry-head time {
+  color: #858b99;
+  font-size: 12px;
+}
+.deployment-title strong {
+  font-size: 14px;
+}
+.deployment-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #262a30;
+  color: #c7ccd6;
+  font-size: 12px;
+  font-weight: 600;
+}
+.deployment-message {
+  margin: 14px 0 0;
+  color: #b9bec9;
+  line-height: 1.5;
+}
+.deployment-meta-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 28px;
+  margin: 16px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid #2a2d34;
+}
+.deployment-meta-grid div {
+  display: grid;
+  min-width: 110px;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+}
+.deployment-meta-grid dt {
+  color: #737985;
+  font-size: 11px;
+}
+.deployment-meta-grid dd {
+  color: #d7dbe3;
+  font-size: 12px;
+  text-align: left;
+}
+.deployment-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+.deployment-actions .secondary {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.deployment-output {
+  margin-top: 16px;
+  padding-top: 14px;
+}
+.deployment-output p {
+  margin: 12px 0 0;
+  color: #efb3b3;
+  font-size: 12px;
+}
+.deployment-output pre {
+  max-height: 320px;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 14px;
+  border-radius: 7px;
+  background: #111317;
+  color: #d7dbe3;
+  font: 12px/1.6 "Space Mono", monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.deployment-marker.status-preparing,
+.deployment-marker.status-interrupted {
+  background: #e0ad55;
+}
+.deployment-status.status-preparing,
+.deployment-status.status-interrupted {
+  background: #2d281b;
+  color: #e7c785;
+}
+.deployment-marker.status-deploying,
+.deployment-marker.status-waiting {
+  background: #e8f55b;
+}
+.deployment-status.status-deploying,
+.deployment-status.status-waiting {
+  background: #252a16;
+  color: #e8f55b;
+}
+.deployment-marker.status-succeeded {
+  background: #71c58a;
+}
+.deployment-status.status-succeeded {
+  background: #1c2b22;
+  color: #92d5a5;
+}
+.deployment-marker.status-failed {
+  background: #ef8f8f;
+}
+.deployment-status.status-failed {
+  background: #2a1c20;
+  color: #efb3b3;
+}
+.deployment-marker.status-cancelled {
+  background: #737985;
+}
+@media (max-width: 700px) {
+  .deployments-head,
+  .deployment-entry-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .deployments-head .primary {
+    width: 100%;
+  }
+  .deployment-timeline > li {
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 7px;
+  }
+  .deployment-entry {
+    padding: 16px;
+  }
+  .deployment-title {
+    flex-wrap: wrap;
+  }
+  .deployment-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .deployment-meta-grid div {
+    min-width: 0;
+  }
+  .deployment-actions .secondary {
+    width: 100%;
+  }
+  .deployment-inline-error {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+@media (max-width: 420px) {
+  .deployment-meta-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .deployment-skeleton .skeleton {
+    animation: none;
+  }
+}
+</style>

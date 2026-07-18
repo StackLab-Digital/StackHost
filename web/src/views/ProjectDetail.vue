@@ -47,6 +47,12 @@ function applicationStatusLabel(status: string) {
     active: "Ativa",
     inactive: "Inativa",
     unknown: "Não publicado",
+    not_deployed: "Não publicada",
+    deploying: "Publicando",
+    running: "Em execução",
+    degraded: "Degradada",
+    stopped: "Parada",
+    failed: "Falhou",
   }[status] || status;
 }
 

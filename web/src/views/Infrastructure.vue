@@ -354,7 +354,7 @@ onMounted(load);
         :disabled="busy"
         @click="
           step = 2;
-          initSwarm;
+          initSwarm();
         "
       >
         Tentar novamente

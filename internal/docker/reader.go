@@ -2,7 +2,9 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +21,30 @@ import (
 )
 
 type Reader struct{ client *client.Client }
+type RuntimeMetric struct {
+	Service          string  `json:"service"`
+	CPUPercent       float64 `json:"cpu_percent"`
+	MemoryBytes      uint64  `json:"memory_bytes"`
+	MemoryLimitBytes uint64  `json:"memory_limit_bytes"`
+	NetworkRxBytes   uint64  `json:"network_rx_bytes"`
+	NetworkTxBytes   uint64  `json:"network_tx_bytes"`
+	RestartCount     int     `json:"restart_count"`
+	Health           string  `json:"health,omitempty"`
+}
+type RuntimeService struct {
+	Name    string `json:"name"`
+	Image   string `json:"image"`
+	Desired int    `json:"desired"`
+	Running int    `json:"running"`
+	Failed  int    `json:"failed"`
+	Health  string `json:"health"`
+}
+
+type RuntimeSnapshot struct {
+	Mode     string           `json:"mode"`
+	Status   string           `json:"status"`
+	Services []RuntimeService `json:"services"`
+}
 type Snapshot struct {
 	Available       bool        `json:"available"`
 	Message         string      `json:"message,omitempty"`
@@ -127,6 +153,170 @@ func NewReader() (*Reader, error) {
 		return nil, err
 	}
 	return &Reader{client: c}, nil
+}
+
+// ResolveIngressTarget derives an internal target from Docker labels and the
+// managed ingress network. It never accepts a user-supplied URL.
+func (r *Reader) ResolveIngressTarget(ctx context.Context, runtimeMode, stackName, serviceName string, port int) (string, error) {
+	if r == nil || r.client == nil || stackName == "" || serviceName == "" || port < 1 || port > 65535 {
+		return "", fmt.Errorf("invalid ingress target")
+	}
+	if runtimeMode == "swarm" {
+		return fmt.Sprintf("http://%s_%s:%d", stackName, serviceName, port), nil
+	}
+	containers, err := r.client.ContainerList(ctx, container.ListOptions{Filters: filters.NewArgs(filters.Arg("label", "com.docker.compose.project="+stackName), filters.Arg("label", "com.docker.compose.service="+serviceName), filters.Arg("status", "running"))})
+	if err != nil || len(containers) == 0 {
+		return "", fmt.Errorf("ingress target unavailable")
+	}
+	for _, item := range containers {
+		inspected, inspectErr := r.client.ContainerInspect(ctx, item.ID)
+		if inspectErr != nil || inspected.NetworkSettings == nil {
+			continue
+		}
+		if networkSettings, ok := inspected.NetworkSettings.Networks["stackhost-ingress"]; ok && networkSettings.IPAddress != "" {
+			return fmt.Sprintf("http://%s:%d", networkSettings.IPAddress, port), nil
+		}
+		for _, networkSettings := range inspected.NetworkSettings.Networks {
+			if networkSettings.IPAddress != "" {
+				return fmt.Sprintf("http://%s:%d", networkSettings.IPAddress, port), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("ingress target unavailable")
+}
+
+func (r *Reader) EnsureIngressNetwork(ctx context.Context, swarmMode bool) error {
+	if r == nil || r.client == nil {
+		return fmt.Errorf("docker unavailable")
+	}
+	if _, err := r.client.NetworkInspect(ctx, "stackhost-ingress", types.NetworkInspectOptions{}); err == nil {
+		return nil
+	}
+	driver := "bridge"
+	options := network.CreateOptions{Driver: driver, Labels: map[string]string{"com.stackhost.managed": "true"}}
+	if swarmMode {
+		options.Driver = "overlay"
+		options.Attachable = true
+	}
+	if _, err := r.client.NetworkCreate(ctx, "stackhost-ingress", options); err != nil {
+		return err
+	}
+	if containerID := os.Getenv("HOSTNAME"); containerID != "" {
+		_ = r.client.NetworkConnect(ctx, "stackhost-ingress", containerID, nil)
+	}
+	return nil
+}
+
+// RuntimeMetrics returns a point-in-time Docker stats snapshot for one
+// Compose project. Swarm metrics intentionally remain local-only: this
+// reader never presents another node's data as a global measurement.
+func (r *Reader) RuntimeMetrics(ctx context.Context, runtimeMode, stackName, serviceName string) ([]RuntimeMetric, error) {
+	if r == nil || r.client == nil || runtimeMode != "standalone" || stackName == "" {
+		return nil, fmt.Errorf("local runtime metrics unavailable")
+	}
+	filterArgs := filters.NewArgs(filters.Arg("label", "com.docker.compose.project="+stackName), filters.Arg("status", "running"))
+	if serviceName != "" {
+		filterArgs.Add("label", "com.docker.compose.service="+serviceName)
+	}
+	containers, err := r.client.ContainerList(ctx, container.ListOptions{Filters: filterArgs})
+	if err != nil {
+		return nil, err
+	}
+	metrics := make([]RuntimeMetric, 0, len(containers))
+	for _, item := range containers {
+		stats, err := r.client.ContainerStatsOneShot(ctx, item.ID)
+		if err != nil {
+			continue
+		}
+		var snapshot container.StatsResponse
+		decodeErr := json.NewDecoder(stats.Body).Decode(&snapshot)
+		_ = stats.Body.Close()
+		if decodeErr != nil && decodeErr != io.EOF {
+			continue
+		}
+		cpuDelta := float64(snapshot.CPUStats.CPUUsage.TotalUsage - snapshot.PreCPUStats.CPUUsage.TotalUsage)
+		systemDelta := float64(snapshot.CPUStats.SystemUsage - snapshot.PreCPUStats.SystemUsage)
+		cpuPercent := 0.0
+		if cpuDelta > 0 && systemDelta > 0 && snapshot.CPUStats.OnlineCPUs > 0 {
+			cpuPercent = (cpuDelta / systemDelta) * float64(snapshot.CPUStats.OnlineCPUs) * 100
+		}
+		var rx, tx uint64
+		for _, network := range snapshot.Networks {
+			rx += network.RxBytes
+			tx += network.TxBytes
+		}
+		metrics = append(metrics, RuntimeMetric{Service: item.Labels["com.docker.compose.service"], CPUPercent: cpuPercent, MemoryBytes: snapshot.MemoryStats.Usage, MemoryLimitBytes: snapshot.MemoryStats.Limit, NetworkRxBytes: rx, NetworkTxBytes: tx})
+	}
+	return metrics, nil
+}
+
+// RuntimeSnapshot returns service state without invoking the Docker CLI.
+func (r *Reader) RuntimeSnapshot(ctx context.Context, runtimeMode, stackName string) (RuntimeSnapshot, error) {
+	if r == nil || r.client == nil || stackName == "" {
+		return RuntimeSnapshot{}, fmt.Errorf("runtime unavailable")
+	}
+	out := RuntimeSnapshot{Mode: runtimeMode, Status: "not_deployed", Services: []RuntimeService{}}
+	if runtimeMode == "swarm" {
+		items, err := r.client.ServiceList(ctx, types.ServiceListOptions{Filters: filters.NewArgs(filters.Arg("label", "com.docker.stack.namespace="+stackName)), Status: true})
+		if err != nil {
+			return out, err
+		}
+		for _, item := range items {
+			desired, running := 0, 0
+			if item.ServiceStatus != nil {
+				desired, running = int(item.ServiceStatus.DesiredTasks), int(item.ServiceStatus.RunningTasks)
+			}
+			image := ""
+			if item.Spec.TaskTemplate.ContainerSpec != nil {
+				image = item.Spec.TaskTemplate.ContainerSpec.Image
+			}
+			out.Services = append(out.Services, RuntimeService{Name: item.Spec.Name, Image: image, Desired: desired, Running: running, Health: "unknown"})
+		}
+	} else {
+		items, err := r.client.ContainerList(ctx, container.ListOptions{Filters: filters.NewArgs(filters.Arg("label", "com.docker.compose.project="+stackName))})
+		if err != nil {
+			return out, err
+		}
+		for _, item := range items {
+			inspected, err := r.client.ContainerInspect(ctx, item.ID)
+			if err != nil || inspected.State == nil {
+				continue
+			}
+			health := "no_healthcheck"
+			if inspected.State.Health != nil && inspected.State.Health.Status != "" {
+				health = strings.ToLower(inspected.State.Health.Status)
+			}
+			ready := inspected.State.Running && health != "unhealthy"
+			name := item.Labels["com.docker.compose.service"]
+			out.Services = append(out.Services, RuntimeService{Name: name, Image: item.Image, Desired: 1, Running: boolInt(ready), Failed: boolInt(!ready), Health: health})
+		}
+	}
+	if len(out.Services) == 0 {
+		return out, nil
+	}
+	running, failed := 0, 0
+	for _, service := range out.Services {
+		running += service.Running
+		failed += service.Failed
+	}
+	switch {
+	case running == len(out.Services):
+		out.Status = "running"
+	case running > 0:
+		out.Status = "degraded"
+	case failed == len(out.Services):
+		out.Status = "stopped"
+	default:
+		out.Status = "unknown"
+	}
+	return out, nil
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 func (r *Reader) Snapshot(ctx context.Context) Snapshot {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)

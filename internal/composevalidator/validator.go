@@ -37,6 +37,7 @@ type EnvironmentVariable struct {
 
 var variableReference = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?])(.*?))?\}`)
 var environmentKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var windowsHostPath = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 
 func Validate(yaml string) Result {
 	return ValidateWithEnvironment(yaml, nil)
@@ -50,6 +51,11 @@ func ValidateWithEnvironment(yaml string, environment map[string]string) Result 
 	}
 	rawDocument := yamlValue(yaml)
 	extractAllVariables(&result.Summary, rawDocument)
+	if errors := hostFileReferenceErrors(rawDocument); len(errors) > 0 {
+		result.Summary.EnvironmentVariables = uniqueVariables(result.Summary.EnvironmentVariables)
+		result.Errors = append(result.Errors, errors...)
+		return result
+	}
 	composeEnvironment := types.Mapping{"COMPOSE_PROJECT_NAME": "stackhost"}
 	for key, value := range environment {
 		composeEnvironment[key] = value
@@ -57,6 +63,9 @@ func ValidateWithEnvironment(yaml string, environment map[string]string) Result 
 	config := types.ConfigDetails{WorkingDir: ".", ConfigFiles: []types.ConfigFile{{Filename: "stackhost.yml", Content: []byte(yaml)}}, Environment: composeEnvironment}
 	project, err := loader.LoadWithContext(context.Background(), config, func(options *loader.Options) {
 		options.SetProjectName("stackhost", true)
+		options.SkipInclude = true
+		options.SkipResolveEnvironment = true
+		options.ResolvePaths = false
 	})
 	if err != nil {
 		result.Summary.EnvironmentVariables = uniqueVariables(result.Summary.EnvironmentVariables)
@@ -69,6 +78,7 @@ func ValidateWithEnvironment(yaml string, environment map[string]string) Result 
 	}
 	for name, service := range project.Services {
 		result.Summary.Services = append(result.Summary.Services, name)
+		result.Errors = append(result.Errors, serviceBoundaryErrors(name, service)...)
 		if service.Image == "" && service.Build != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("O serviço %q usa build, ainda não suportado nesta etapa.", name))
 		} else if service.Image == "" {
@@ -95,6 +105,9 @@ func ValidateWithEnvironment(yaml string, environment map[string]string) Result 
 	result.Summary.EnvironmentVariables = uniqueVariables(result.Summary.EnvironmentVariables)
 	for name := range project.Volumes {
 		result.Summary.Volumes = append(result.Summary.Volumes, name)
+		if namedVolumeUsesHostPath(project.Volumes[name]) {
+			result.Errors = append(result.Errors, fmt.Sprintf("O volume %q usa um caminho do host, que não é suportado.", name))
+		}
 	}
 	for name := range project.Networks {
 		result.Summary.Networks = append(result.Summary.Networks, name)
@@ -131,6 +144,119 @@ func yamlValue(raw string) *yaml.Node {
 		return nil
 	}
 	return &doc
+}
+
+func hostFileReferenceErrors(doc *yaml.Node) []string {
+	root := decodedMapping(doc)
+	if root == nil {
+		return nil
+	}
+	errors := []string{}
+	if _, exists := root["include"]; exists {
+		errors = append(errors, "O Compose não pode usar include.")
+	}
+	for name, rawService := range mapping(root["services"]) {
+		service := mapping(rawService)
+		if _, exists := service["env_file"]; exists {
+			errors = append(errors, fmt.Sprintf("O serviço %q não pode usar env_file.", name))
+		}
+		if _, exists := service["label_file"]; exists {
+			errors = append(errors, fmt.Sprintf("O serviço %q não pode usar label_file.", name))
+		}
+		if extends := mapping(service["extends"]); extends != nil {
+			if _, exists := extends["file"]; exists {
+				errors = append(errors, fmt.Sprintf("O serviço %q não pode usar extends com arquivo.", name))
+			}
+		}
+		if credential := mapping(service["credential_spec"]); credential != nil {
+			if _, exists := credential["file"]; exists {
+				errors = append(errors, fmt.Sprintf("O serviço %q não pode usar credential_spec com arquivo.", name))
+			}
+		}
+	}
+	for _, section := range []string{"configs", "secrets"} {
+		for name, rawObject := range mapping(root[section]) {
+			if _, exists := mapping(rawObject)["file"]; exists {
+				errors = append(errors, fmt.Sprintf("%s %q não pode usar arquivo do host.", section, name))
+			}
+		}
+	}
+	sort.Strings(errors)
+	return errors
+}
+
+func decodedMapping(doc *yaml.Node) map[string]any {
+	if doc == nil {
+		return nil
+	}
+	var value map[string]any
+	if doc.Decode(&value) != nil {
+		return nil
+	}
+	return value
+}
+
+func mapping(value any) map[string]any {
+	result, _ := value.(map[string]any)
+	return result
+}
+
+func serviceBoundaryErrors(name string, service types.ServiceConfig) []string {
+	errors := []string{}
+	if service.Privileged {
+		errors = append(errors, fmt.Sprintf("O serviço %q não pode usar privileged.", name))
+	}
+	for field, value := range map[string]string{"network_mode": service.NetworkMode, "pid": service.Pid, "ipc": service.Ipc} {
+		if usesHostNamespace(value) {
+			errors = append(errors, fmt.Sprintf("O serviço %q não pode usar %s do host.", name, field))
+		}
+	}
+	if len(service.Devices) > 0 || len(service.DeviceCgroupRules) > 0 || len(service.Gpus) > 0 {
+		errors = append(errors, fmt.Sprintf("O serviço %q não pode acessar devices do host.", name))
+	}
+	if len(service.VolumesFrom) > 0 {
+		errors = append(errors, fmt.Sprintf("O serviço %q não pode usar volumes_from.", name))
+	}
+	for _, volume := range service.Volumes {
+		if isDockerSocket(volume.Source) || isDockerSocket(volume.Target) {
+			errors = append(errors, fmt.Sprintf("O serviço %q não pode montar o socket do Docker.", name))
+		} else if volume.Type == types.VolumeTypeBind || volume.Type == types.VolumeTypeNamedPipe {
+			errors = append(errors, fmt.Sprintf("O serviço %q não pode montar caminhos do host.", name))
+		}
+	}
+	return errors
+}
+
+func usesHostNamespace(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return value == "host" || strings.HasPrefix(value, "container:")
+}
+
+func isDockerSocket(value string) bool {
+	value = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), `\`, "/"))
+	return strings.HasSuffix(value, "docker.sock") || strings.Contains(value, "docker_engine")
+}
+
+func namedVolumeUsesHostPath(volume types.VolumeConfig) bool {
+	for key, value := range volume.DriverOpts {
+		key = strings.ToLower(key)
+		lower := strings.ToLower(strings.TrimSpace(value))
+		if key == "o" && (strings.Contains(lower, "bind") || strings.Contains(lower, "rbind")) {
+			return true
+		}
+		if key == "type" && lower == "none" {
+			return true
+		}
+		if key == "device" && looksLikeHostPath(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeHostPath(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "/") || strings.HasPrefix(value, "./") || strings.HasPrefix(value, "../") || strings.HasPrefix(value, "~") || windowsHostPath.MatchString(value)
 }
 
 func extractVariables(summary *Summary, doc *yaml.Node, serviceName string) {

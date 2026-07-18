@@ -5,10 +5,16 @@ services:
     ports: ["8080:8080"]
     volumes:
       - stackhost_data:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       STACKHOST_DATA_DIR: /app/data
       STACKHOST_COOKIE_SECURE: "true"
+      STACKHOST_APP_ENV: production
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
     deploy:
       placement:
         constraints: [node.role == manager]

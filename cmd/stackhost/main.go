@@ -20,7 +20,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/StackLab-Digital/StackHost/internal/deployment"
 	dockerreader "github.com/StackLab-Digital/StackHost/internal/docker"
+	eventhub "github.com/StackLab-Digital/StackHost/internal/events"
+	"github.com/StackLab-Digital/StackHost/internal/ingress"
+	"github.com/StackLab-Digital/StackHost/internal/migrations"
 	"github.com/StackLab-Digital/StackHost/internal/secure"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"
@@ -29,12 +33,15 @@ import (
 type app struct {
 	db            *sql.DB
 	sessionSecret string
-	events        chan map[string]any
+	events        *eventhub.Hub
 	docker        *dockerreader.Reader
 	cipher        *secure.Cipher
 	loginMu       sync.Mutex
 	loginAttempts map[string]attempt
-	deployMu      sync.Mutex
+	deployments   *deploymentAPI
+	domains       *domainAPI
+	ingressProxy  *ingress.Proxy
+	backups       *backupAPI
 }
 type attempt struct {
 	count int
@@ -63,16 +70,37 @@ func main() {
 	if err := os.MkdirAll(dataDir, 0750); err != nil {
 		panic(err)
 	}
-	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "stackhost.db?_foreign_keys=on"))
+	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "stackhost.db?_foreign_keys=on&_busy_timeout=5000&_journal_mode=WAL"))
 	if err != nil {
 		panic(err)
 	}
 	defer db.Close()
-	if err = migrate(db); err != nil {
+	if err = migrations.Run(context.Background(), db); err != nil {
 		panic(err)
 	}
 	dr, _ := dockerreader.NewReader()
-	a := &app{db: db, sessionSecret: sessionSecret, cipher: cipher, events: make(chan map[string]any, 32), docker: dr, loginAttempts: make(map[string]attempt)}
+	events := eventhub.New(64)
+	defer events.Close()
+	a := &app{db: db, sessionSecret: sessionSecret, cipher: cipher, events: events, docker: dr, loginAttempts: make(map[string]attempt)}
+	a.backups = &backupAPI{app: a, dataDir: dataDir}
+	a.ingressProxy = ingress.NewProxy()
+	a.domains = newDomainAPI(a, ingress.NewSQLStore(db), a.ingressProxy, dr)
+	a.domains.reload(context.Background())
+	store := deployment.NewSQLStore(db)
+	runner := deployment.NewDockerRunner()
+	engine := deployment.NewEngine(store, runner, deployment.EngineOptions{Emitter: deployment.EmitterFunc(a.publishDeploymentEvent)})
+	a.deployments = newDeploymentAPI(a, engine)
+	a.deployments.logs = runner
+	if _, err := engine.Recover(context.Background()); err != nil {
+		panic(err)
+	}
+	defer engine.Close()
+	ingressServers := startIngressServers(a)
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ingressServers.Close(shutdown)
+	}()
 	s := &http.Server{Addr: addr, Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -94,58 +122,6 @@ func getenv(k, fallback string) string {
 	}
 	return fallback
 }
-func migrate(db *sql.DB) error {
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
-		return err
-	}
-	var applied int
-	_ = db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=1").Scan(&applied)
-	if applied == 0 {
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		if _, err = tx.Exec(`CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_login_at TEXT); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, token_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, revoked_at TEXT, user_agent TEXT, ip_address TEXT); CREATE TABLE IF NOT EXISTS projects(id INTEGER PRIMARY KEY, name TEXT NOT NULL, slug TEXT UNIQUE NOT NULL, description TEXT, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS applications(id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, slug TEXT NOT NULL, source_type TEXT NOT NULL, docker_stack_name TEXT, status TEXT NOT NULL DEFAULT 'unknown', created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS audit_logs(id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL, resource_type TEXT, resource_id TEXT, metadata TEXT, ip_address TEXT, created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash); CREATE INDEX IF NOT EXISTS idx_apps_project ON applications(project_id);`); err != nil {
-			tx.Rollback()
-			return err
-		}
-		if _, err = tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES(1,?)", time.Now().UTC().Format(time.RFC3339)); err != nil {
-			tx.Rollback()
-			return err
-		}
-		if err = tx.Commit(); err != nil {
-			return err
-		}
-	}
-	var version2 int
-	_ = db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=2").Scan(&version2)
-	if version2 == 0 {
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		for _, column := range []string{"description TEXT NOT NULL DEFAULT ''", "configuration_status TEXT NOT NULL DEFAULT 'draft'", "configured_at TEXT", "last_validated_at TEXT", "source_revision INTEGER NOT NULL DEFAULT 0"} {
-			if _, err = tx.Exec("ALTER TABLE applications ADD COLUMN " + column); err != nil && !strings.Contains(err.Error(), "duplicate column") {
-				return err
-			}
-		}
-		if _, err = tx.Exec(`UPDATE applications SET configuration_status='draft' WHERE status='unknown'; CREATE TABLE IF NOT EXISTS application_sources(id INTEGER PRIMARY KEY, application_id INTEGER NOT NULL UNIQUE REFERENCES applications(id) ON DELETE CASCADE, source_type TEXT NOT NULL, encrypted_payload BLOB NOT NULL, encryption_nonce BLOB NOT NULL, payload_version INTEGER NOT NULL DEFAULT 1, checksum TEXT NOT NULL, validation_status TEXT NOT NULL DEFAULT 'draft', validation_errors TEXT NOT NULL DEFAULT '[]', validation_warnings TEXT NOT NULL DEFAULT '[]', summary_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_application_sources_application ON application_sources(application_id); INSERT INTO schema_migrations(version,applied_at) VALUES(2,?)`, time.Now().UTC().Format(time.RFC3339)); err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
-	}
-	var version3 int
-	_ = db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=3").Scan(&version3)
-	if version3 == 0 {
-		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS environment_settings(id INTEGER PRIMARY KEY, runtime_mode TEXT NOT NULL DEFAULT 'standalone', updated_at TEXT NOT NULL); INSERT OR IGNORE INTO environment_settings(id,runtime_mode,updated_at) VALUES(1,'standalone',?); INSERT INTO schema_migrations(version,applied_at) VALUES(3,?)`, time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health/live", func(w http.ResponseWriter, r *http.Request) {
@@ -161,6 +137,24 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("/api/v1/projects", a.auth(a.projects))
 	mux.HandleFunc("/api/v1/projects/", a.auth(a.projectRoute))
 	mux.HandleFunc("/api/v1/applications/", a.auth(a.applicationRouteV2))
+	mux.HandleFunc("/api/v1/deployments/", a.auth(func(w http.ResponseWriter, r *http.Request) {
+		if a.deployments == nil {
+			jsonError(w, http.StatusServiceUnavailable, "runtime_unavailable", "O motor de deploy não está disponível.")
+			return
+		}
+		a.deployments.deploymentRoute(w, r)
+	}))
+	mux.HandleFunc("/api/v1/ingress/status", a.auth(func(w http.ResponseWriter, r *http.Request) {
+		if a.domains == nil {
+			jsonError(w, http.StatusServiceUnavailable, "runtime_unavailable", "O ingress não está disponível.")
+			return
+		}
+		a.domains.status(w, r)
+	}))
+	mux.HandleFunc("/api/v1/backups/system", a.auth(a.backupRoute))
+	mux.HandleFunc("/api/v1/backups/system/", a.auth(a.backupRoute))
+	mux.HandleFunc("/api/v1/notifications", a.auth(a.notificationsRoute))
+	mux.HandleFunc("/api/v1/notifications/", a.auth(a.notificationsRoute))
 	mux.HandleFunc("/api/v1/catalog", a.auth(a.catalog))
 	mux.HandleFunc("/api/v1/source/validate", a.auth(a.validateSourcePreview))
 	mux.HandleFunc("/api/v1/infrastructure", a.auth(a.infrastructure))
@@ -197,13 +191,16 @@ func security(next http.Handler) http.Handler {
 	})
 }
 func (a *app) ready(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	if err := a.db.Ping(); err != nil {
-		http.Error(w, `{"status":"not_ready"}`, 503)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"status": "not_ready"})
 		return
 	}
-	var migrations int
-	if err := a.db.QueryRow("SELECT count(*) FROM schema_migrations WHERE version=3").Scan(&migrations); err != nil || migrations != 1 {
-		http.Error(w, `{"status":"not_ready","reason":"migrations"}`, 503)
+	current, err := migrations.IsCurrent(r.Context(), a.db)
+	if err != nil || !current {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"status": "not_ready", "reason": "migrations"})
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
@@ -368,8 +365,10 @@ type userKey struct{}
 
 func (a *app) me(w http.ResponseWriter, r *http.Request) {
 	var u struct {
-		ID                int64 `json:"id"`
-		Name, Email, Role string
+		ID    int64  `json:"id"`
+		Name  string `json:"name"`
+		Email string `json:"email"`
+		Role  string `json:"role"`
 	}
 	a.db.QueryRow("SELECT id,name,email,role FROM users WHERE id=?", r.Context().Value(userKey{})).Scan(&u.ID, &u.Name, &u.Email, &u.Role)
 	json.NewEncoder(w).Encode(u)
@@ -430,7 +429,11 @@ func (a *app) activity(w http.ResponseWriter, r *http.Request) {
 func (a *app) projects(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method == "GET" {
-		rows, _ := a.db.Query("SELECT id,name,slug,coalesce(description,''),status,created_at,updated_at,(SELECT count(*) FROM applications a WHERE a.project_id=projects.id) FROM projects ORDER BY id DESC")
+		rows, err := a.db.Query("SELECT id,name,slug,coalesce(description,''),status,created_at,updated_at,(SELECT count(*) FROM applications a WHERE a.project_id=projects.id) FROM projects ORDER BY id DESC")
+		if err != nil {
+			jsonError(w, 500, "internal_error", "Não foi possível listar os projetos.")
+			return
+		}
 		defer rows.Close()
 		out := []any{}
 		for rows.Next() {
@@ -524,7 +527,7 @@ func (a *app) projectRoute(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) applications(w http.ResponseWriter, r *http.Request, projectID int64) {
 	if r.Method == "GET" {
-		rows, err := a.db.Query("SELECT id,name,slug,source_type,coalesce(docker_stack_name,''),coalesce(configuration_status,'draft'),created_at,updated_at FROM applications WHERE project_id=? ORDER BY id DESC", projectID)
+		rows, err := a.db.Query("SELECT id,name,slug,source_type,coalesce(docker_stack_name,''),coalesce(status,'unknown'),coalesce(configuration_status,'draft'),created_at,updated_at FROM applications WHERE project_id=? ORDER BY id DESC", projectID)
 		if err != nil {
 			jsonError(w, 500, "internal_error", "Não foi possível listar aplicações.")
 			return
@@ -533,9 +536,16 @@ func (a *app) applications(w http.ResponseWriter, r *http.Request, projectID int
 		out := []any{}
 		for rows.Next() {
 			var id int
-			var name, slug, source, stack, status, created, updated string
-			rows.Scan(&id, &name, &slug, &source, &stack, &status, &created, &updated)
-			out = append(out, map[string]any{"id": id, "project_id": projectID, "name": name, "slug": slug, "source_type": source, "docker_stack_name": stack, "status": status, "configuration_status": status, "created_at": created, "updated_at": updated})
+			var name, slug, source, stack, status, configurationStatus, created, updated string
+			if err := rows.Scan(&id, &name, &slug, &source, &stack, &status, &configurationStatus, &created, &updated); err != nil {
+				jsonError(w, 500, "internal_error", "Não foi possível listar aplicações.")
+				return
+			}
+			out = append(out, map[string]any{"id": id, "project_id": projectID, "name": name, "slug": slug, "source_type": source, "docker_stack_name": stack, "status": status, "configuration_status": configurationStatus, "created_at": created, "updated_at": updated})
+		}
+		if err := rows.Err(); err != nil {
+			jsonError(w, 500, "internal_error", "Não foi possível listar aplicações.")
+			return
 		}
 		json.NewEncoder(w).Encode(out)
 		return
@@ -585,8 +595,12 @@ func (a *app) applications(w http.ResponseWriter, r *http.Request, projectID int
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	configurationStatus := "draft"
+	configuredAt, validatedAt := "", ""
+	sourceRevision := 0
 	if result.Valid {
 		configurationStatus = "configured"
+		configuredAt, validatedAt = now, now
+		sourceRevision = 1
 	}
 	tx, err := a.db.Begin()
 	if err != nil {
@@ -594,7 +608,7 @@ func (a *app) applications(w http.ResponseWriter, r *http.Request, projectID int
 		return
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec("INSERT INTO applications(project_id,name,description,slug,source_type,docker_stack_name,status,configuration_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)", projectID, in.Name, in.Description, in.Slug, in.SourceType, in.DockerStackName, configurationStatus, configurationStatus, now, now)
+	res, err := tx.Exec("INSERT INTO applications(project_id,name,description,slug,source_type,docker_stack_name,status,configuration_status,configured_at,last_validated_at,source_revision,created_at,updated_at) VALUES(?,?,?,?,?,?, 'not_deployed', ?,NULLIF(?,''),NULLIF(?,''),?,?,?)", projectID, in.Name, in.Description, in.Slug, in.SourceType, in.DockerStackName, configurationStatus, configuredAt, validatedAt, sourceRevision, now, now)
 	if err != nil {
 		jsonError(w, 409, "already_exists", "Não foi possível criar a aplicação.")
 		return
@@ -625,7 +639,7 @@ func (a *app) applications(w http.ResponseWriter, r *http.Request, projectID int
 		a.audit(userID, "application.created", "application", id)
 	}
 	a.publish("application.created", map[string]any{"id": id, "project_id": projectID})
-	json.NewEncoder(w).Encode(map[string]any{"id": id, "project_id": projectID, "name": in.Name, "description": in.Description, "slug": in.Slug, "source_type": in.SourceType, "status": configurationStatus, "configuration_status": configurationStatus})
+	json.NewEncoder(w).Encode(map[string]any{"id": id, "project_id": projectID, "name": in.Name, "description": in.Description, "slug": in.Slug, "source_type": in.SourceType, "status": "not_deployed", "configuration_status": configurationStatus})
 }
 
 func (a *app) applicationRoute(w http.ResponseWriter, r *http.Request) {
@@ -674,11 +688,10 @@ func (a *app) applicationRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) publish(event string, data map[string]any) {
-	payload := map[string]any{"event": event, "data": data, "at": time.Now().UTC().Format(time.RFC3339)}
-	select {
-	case a.events <- payload:
-	default:
+	if a.events != nil {
+		a.events.Publish(event, data)
 	}
+	go a.deliverNotifications(event, data)
 }
 func (a *app) eventsStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -691,13 +704,21 @@ func (a *app) eventsStream(w http.ResponseWriter, r *http.Request) {
 	b, _ := json.Marshal(map[string]any{"event": "connected"})
 	fmt.Fprintf(w, "data: %s\n\n", b)
 	flusher.Flush()
+	if a.events == nil {
+		return
+	}
+	subscriber := a.events.Subscribe()
+	defer a.events.Unsubscribe(subscriber)
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case event := <-a.events:
+		case event, ok := <-subscriber:
+			if !ok {
+				return
+			}
 			b, _ := json.Marshal(event)
 			fmt.Fprintf(w, "data: %s\n\n", b)
 			flusher.Flush()

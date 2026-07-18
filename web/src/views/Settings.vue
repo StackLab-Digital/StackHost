@@ -12,14 +12,44 @@ const loading = ref(true);
 const signingOut = ref(false);
 const runtimeMode = ref<"standalone" | "swarm">("standalone");
 const runtimeSaving = ref(false);
+const backups = ref<Array<{ id: number; status: string; size_bytes: number; created_at: string }>>([]);
+const backupBusy = ref(false);
+const notifications = ref<Array<{ id: number; name: string; kind: string; last_status: string }>>([]);
+const notificationName = ref("");
+const notificationURL = ref("");
+const notificationBusy = ref(false);
 async function load() {
   try {
     infra.value = await api("/api/v1/infrastructure");
     const settings = await api<{ runtime_mode: "standalone" | "swarm" }>("/api/v1/settings/environment");
     runtimeMode.value = settings.runtime_mode;
+    if (auth.user?.role === "admin") backups.value = await api<typeof backups.value>("/api/v1/backups/system");
+    if (auth.user?.role === "admin") notifications.value = await api<typeof notifications.value>("/api/v1/notifications");
   } finally {
     loading.value = false;
   }
+}
+async function createNotification() {
+  notificationBusy.value = true;
+  try {
+    await api("/api/v1/notifications", { method: "POST", body: JSON.stringify({ name: notificationName.value, kind: "webhook", url: notificationURL.value, events: ["deployment.succeeded", "deployment.failed"] }) });
+    notifications.value = await api<typeof notifications.value>("/api/v1/notifications"); notificationName.value = ""; notificationURL.value = ""; toast.success("Notificação salva.");
+  } catch (err) { toast.error(err instanceof Error ? err.message : "Não foi possível salvar a notificação."); }
+  finally { notificationBusy.value = false; }
+}
+async function testNotification(id: number) {
+  try { await api(`/api/v1/notifications/${id}/test`, { method: "POST" }); toast.success("Teste enviado."); }
+  catch (err) { toast.error(err instanceof Error ? err.message : "O teste falhou."); }
+}
+async function createBackup() {
+  backupBusy.value = true;
+  try { await api("/api/v1/backups/system", { method: "POST" }); backups.value = await api<typeof backups.value>("/api/v1/backups/system"); toast.success("Backup criado."); }
+  catch (err) { toast.error(err instanceof Error ? err.message : "Não foi possível criar o backup."); }
+  finally { backupBusy.value = false; }
+}
+async function removeBackup(id: number) {
+  try { await api(`/api/v1/backups/system/${id}`, { method: "DELETE" }); backups.value = backups.value.filter((item) => item.id !== id); }
+  catch (err) { toast.error(err instanceof Error ? err.message : "Não foi possível remover o backup."); }
 }
 async function saveRuntimeMode() {
   runtimeSaving.value = true;
@@ -75,6 +105,22 @@ onMounted(load);
           <dd>Conta local</dd>
         </div>
       </dl>
+    </section>
+    <section v-if="auth.user?.role === 'admin'" class="panel panel-section">
+      <p class="kicker">BACKUPS</p>
+      <h2>Recuperação do StackHost</h2>
+      <p class="muted">Inclui o SQLite e os certificados locais. Os arquivos ficam somente neste servidor.</p>
+      <button class="secondary" type="button" :disabled="backupBusy" @click="createBackup">{{ backupBusy ? "Criando…" : "Criar backup agora" }}</button>
+      <ul v-if="backups.length" class="settings-list">
+        <li v-for="backup in backups" :key="backup.id"><span>{{ new Date(backup.created_at).toLocaleString() }}</span><a :href="`/api/v1/backups/system/${backup.id}/download`">Baixar</a><button class="ghost" type="button" @click="removeBackup(backup.id)">Remover</button></li>
+      </ul>
+    </section>
+    <section v-if="auth.user?.role === 'admin'" class="panel panel-section">
+      <p class="kicker">NOTIFICAÇÕES</p>
+      <h2>Webhooks operacionais</h2>
+      <p class="muted">URLs são protegidas no banco. Comece com deploy concluído ou falho.</p>
+      <div class="settings-form"><input v-model="notificationName" aria-label="Nome da notificação" placeholder="Nome" /><input v-model="notificationURL" aria-label="URL do webhook" type="url" placeholder="https://…" /><button class="secondary" type="button" :disabled="notificationBusy" @click="createNotification">Adicionar webhook</button></div>
+      <ul v-if="notifications.length" class="settings-list"><li v-for="item in notifications" :key="item.id"><span>{{ item.name }} · {{ item.kind }}</span><button class="ghost" type="button" @click="testNotification(item.id)">Testar</button></li></ul>
     </section>
     <section class="panel panel-section runtime-settings">
       <p class="kicker">MODO DE EXECUÇÃO</p>

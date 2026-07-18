@@ -14,30 +14,78 @@ const saving = ref(false);
 const fields = ref({ name: "", description: "" });
 const fieldErrors = ref<Record<string, string>>({});
 let source: EventSource | undefined;
+let pollTimer: number | undefined;
+let refreshing = false;
+const refreshEvents = new Set([
+  "project.created",
+  "project.updated",
+  "application.created",
+  "application.updated",
+  "application.deleted",
+  "application.source_configured",
+  "application.source_validated",
+  "application.source_invalid",
+  "application.source_changed",
+  "swarm.initialized",
+]);
 const nowGreeting = computed(() => {
   const hour = new Date().getHours();
   return hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
 });
 const infra = computed(() => data.value.infrastructure as Infrastructure);
 const userName = ref("Administrador");
-async function load() {
-  loading.value = true;
-  error.value = "";
+async function load(silent = false) {
+  if (refreshing) return;
+  refreshing = true;
+  if (!silent) {
+    loading.value = true;
+    error.value = "";
+  }
   try {
     data.value = await api("/api/v1/dashboard");
-    try {
-      const me = await api<{ name: string }>("/api/v1/me");
-      if (me.name) userName.value = me.name.split(" ")[0];
-    } catch {
-      /* dashboard remains useful if the profile request is unavailable */
+    if (silent) {
+      error.value = "";
+    } else {
+      try {
+        const me = await api<{ name: string }>("/api/v1/me");
+        if (me.name) userName.value = me.name.split(" ")[0];
+      } catch {
+        /* dashboard remains useful if the profile request is unavailable */
+      }
     }
   } catch (err) {
-    error.value =
-      err instanceof Error
-        ? err.message
-        : "Não foi possível carregar o painel.";
+    if (!silent) {
+      error.value =
+        err instanceof Error
+          ? err.message
+          : "Não foi possível carregar o painel.";
+    }
   } finally {
-    loading.value = false;
+    if (!silent) loading.value = false;
+    refreshing = false;
+  }
+}
+function stopPolling() {
+  if (pollTimer === undefined) return;
+  window.clearInterval(pollTimer);
+  pollTimer = undefined;
+}
+function startPolling() {
+  if (pollTimer !== undefined) return;
+  void load(true);
+  pollTimer = window.setInterval(() => void load(true), 30_000);
+}
+function handleEvent(event: MessageEvent<string>) {
+  let message: { event?: string; data?: Infrastructure };
+  try {
+    message = JSON.parse(event.data);
+  } catch {
+    return;
+  }
+  if (message.event === "infrastructure.updated" && message.data) {
+    data.value = { ...data.value, infrastructure: message.data };
+  } else if (message.event && refreshEvents.has(message.event)) {
+    void load(true);
   }
 }
 async function createProject() {
@@ -63,10 +111,19 @@ async function createProject() {
 }
 onMounted(async () => {
   await load();
-  source = new EventSource("/api/v1/events");
-  source.onmessage = () => load();
+  try {
+    source = new EventSource("/api/v1/events");
+    source.onmessage = handleEvent;
+    source.onopen = stopPolling;
+    source.onerror = startPolling;
+  } catch {
+    startPolling();
+  }
 });
-onUnmounted(() => source?.close());
+onUnmounted(() => {
+  source?.close();
+  stopPolling();
+});
 </script>
 <template>
   <div class="hero">
@@ -87,7 +144,7 @@ onUnmounted(() => source?.close());
   <div v-else-if="error" class="empty">
     <h2>Não foi possível carregar o painel</h2>
     <p>{{ error }}</p>
-    <button class="secondary" type="button" @click="load">
+    <button class="secondary" type="button" @click="load()">
       Tentar novamente
     </button>
   </div>

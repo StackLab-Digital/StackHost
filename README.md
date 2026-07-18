@@ -27,7 +27,11 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The Docker socket is mounted read-only so infrastructure can be inspected. Access to the Docker socket is effectively elevated host access; use a dedicated host and review this risk before production deployment. Swarm users can adapt `deploy/stackhost.stack.yml`; the service is constrained to managers.
+The Docker socket is mounted into the container so StackHost can inspect and operate workloads. A Unix socket remains effectively elevated host access even when the application filesystem is read-only; use a dedicated host and review this risk before production deployment. Swarm users can adapt `deploy/stackhost.stack.yml`; the service is constrained to managers.
+
+For a production-like install, set strong `STACKHOST_SESSION_SECRET` and `STACKHOST_ENCRYPTION_KEY` values, keep `STACKHOST_COOKIE_SECURE=true` behind HTTPS, and enable ingress only after DNS points to the host. The optional ACME certificate cache lives under `STACKHOST_CERT_STORAGE`.
+
+Operational endpoints include asynchronous deployments under `/api/v1/applications/:id/deployments`, local runtime metrics under `/api/v1/applications/:id/metrics`, system backups under `/api/v1/backups/system`, and administrator-only webhook notifications under `/api/v1/notifications`. Backups currently use local storage; S3-compatible destinations and scheduled retention are not enabled yet.
 
 ## Structure
 
@@ -35,7 +39,7 @@ The Go API lives in `cmd/stackhost`, the Vue interface in `web`, and deployment 
 
 ## Roadmap
 
-Future releases may add deployment workflows, catalog integrations, backups, and reverse-proxy automation.
+The current branch includes asynchronous deploy history, native ingress/domains, runtime actions and logs, local health/metrics, local backups, and webhook notifications. Remaining follow-up work includes global Swarm metrics, S3/scheduled backups, richer catalog workflows, and installation automation.
 
 ## License
 

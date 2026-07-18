@@ -1,19 +1,20 @@
 package docker
 
 import (
+	"context"
 	"testing"
-
-	"github.com/docker/docker/api/types/swarm"
 )
 
-func TestActiveSwarmRecognizesWorker(t *testing.T) {
-	if !activeSwarm(swarm.Info{LocalNodeState: swarm.LocalNodeStateActive}) {
-		t.Fatal("active worker should be recognized as participating in Swarm")
+func TestRuntimeMetricsRejectsNonLocalRuntime(t *testing.T) {
+	reader := &Reader{}
+	if _, err := reader.RuntimeMetrics(context.Background(), "swarm", "demo", ""); err == nil {
+		t.Fatal("expected swarm metrics to be rejected as non-local")
 	}
 }
 
-func TestActiveSwarmRejectsInactiveNode(t *testing.T) {
-	if activeSwarm(swarm.Info{LocalNodeState: swarm.LocalNodeStateInactive}) {
-		t.Fatal("inactive node should not be recognized as active Swarm")
+func TestRuntimeSnapshotRejectsMissingReader(t *testing.T) {
+	reader := &Reader{}
+	if _, err := reader.RuntimeSnapshot(context.Background(), "standalone", "demo"); err == nil {
+		t.Fatal("expected runtime snapshot to require a Docker client")
 	}
 }

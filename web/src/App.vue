@@ -64,7 +64,7 @@ onUnmounted(() => document.removeEventListener("keydown", keydown));
       <div class="sidebar-foot">
         <span class="dot" />
         <div>
-          <strong>Ambiente local</strong><small>Docker conectado</small>
+          <strong>Ambiente local</strong><small>StackHost autogerenciado</small>
         </div>
       </div>
       <RouterLink class="account-link" to="/settings" @click="closeMenu"

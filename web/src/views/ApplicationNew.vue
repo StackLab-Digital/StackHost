@@ -44,7 +44,11 @@ function goBack() {
   if (dirty.value) discardOpen.value = true;
   else router.push(`/projects/${route.params.projectId}`);
 }
-function discard() { discardOpen.value = false; router.push(`/projects/${route.params.projectId}`); }
+function discard() {
+  allowNavigation.value = true;
+  discardOpen.value = false;
+  router.push(`/projects/${route.params.projectId}`);
+}
 function selectSource(value: string) { newApp.value.source_type = value; }
 async function next() {
   if (step.value === 1 && !newApp.value.name.trim()) { fieldErrors.value = { name: "O nome é obrigatório." }; return; }

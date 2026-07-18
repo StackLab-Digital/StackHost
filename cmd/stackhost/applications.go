@@ -1,15 +1,12 @@
 package main
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -17,6 +14,7 @@ import (
 	"time"
 
 	"github.com/StackLab-Digital/StackHost/internal/composevalidator"
+	"github.com/StackLab-Digital/StackHost/internal/deployment"
 )
 
 var variableKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -183,11 +181,97 @@ func (a *app) applicationRouteV2(w http.ResponseWriter, r *http.Request) {
 		a.applicationSource(w, r, id)
 		return
 	}
-	if len(parts) == 5 && (parts[4] == "deploy" || parts[4] == "runtime") {
-		if parts[4] == "deploy" {
-			a.deployCompose(w, r, id)
+	if len(parts) == 5 && parts[4] == "deployments" {
+		if a.deployments == nil {
+			jsonError(w, http.StatusServiceUnavailable, "runtime_unavailable", "O motor de deploy não está disponível.")
+			return
+		}
+		a.deployments.applicationDeployments(w, r)
+		return
+	}
+	if len(parts) == 5 && parts[4] == "duplicate" {
+		if r.Method != http.MethodPost {
+			jsonError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Método não permitido.")
+			return
+		}
+		userID, ok := r.Context().Value(userKey{}).(int64)
+		if !ok || !a.isAdmin(userID) {
+			jsonError(w, http.StatusForbidden, "forbidden", "Apenas administradores podem duplicar aplicações.")
+			return
+		}
+		a.duplicateApplication(w, r, id)
+		return
+	}
+	if len(parts) >= 5 && parts[4] == "domains" {
+		if a.domains == nil {
+			jsonError(w, http.StatusServiceUnavailable, "runtime_unavailable", "O ingress não está disponível.")
+			return
+		}
+		a.domains.route(w, r, id, parts)
+		return
+	}
+	if len(parts) >= 5 && parts[4] == "logs" {
+		if a.deployments == nil {
+			jsonError(w, http.StatusServiceUnavailable, "runtime_unavailable", "O leitor de logs não está disponível.")
+			return
+		}
+		if len(parts) == 6 && parts[5] == "stream" {
+			a.deployments.logsStream(w, r, id, r.URL.Query().Get("service"))
+			return
+		}
+		if len(parts) == 6 && parts[5] == "services" {
+			a.deployments.logsRoute(w, r, id, "")
+			return
+		}
+		if len(parts) == 5 {
+			a.deployments.logsRoute(w, r, id, r.URL.Query().Get("service"))
+			return
+		}
+		jsonError(w, http.StatusNotFound, "not_found", "Rota de logs não encontrada.")
+		return
+	}
+	if len(parts) == 5 && parts[4] == "metrics" {
+		if a.deployments == nil {
+			jsonError(w, http.StatusServiceUnavailable, "runtime_unavailable", "O runtime não está disponível.")
+			return
+		}
+		a.deployments.metricsRoute(w, r, id)
+		return
+	}
+	if len(parts) == 5 && parts[4] == "runtime" && r.Method == http.MethodDelete {
+		if a.deployments == nil || !a.deployments.requireAdmin(w, r) {
+			return
+		}
+		a.deployments.action(w, r, id, deployment.OperationRemove)
+		return
+	}
+	if len(parts) == 6 && parts[4] == "actions" {
+		if a.deployments == nil || !a.deployments.requireAdmin(w, r) {
+			return
+		}
+		operations := map[string]deployment.Operation{"start": deployment.OperationStart, "stop": deployment.OperationStop, "restart": deployment.OperationRestart, "redeploy": "redeploy"}
+		operation, ok := operations[parts[5]]
+		if !ok || r.Method != http.MethodPost {
+			jsonError(w, http.StatusNotFound, "not_found", "Ação não encontrada.")
+			return
+		}
+		if operation == "redeploy" {
+			a.deployments.create(w, r, id)
 		} else {
+			a.deployments.action(w, r, id, operation)
+		}
+		return
+	}
+	if len(parts) == 5 && (parts[4] == "deploy" || parts[4] == "runtime") {
+		if parts[4] == "deploy" && a.deployments != nil {
+			if !a.deployments.requireAdmin(w, r) {
+				return
+			}
+			a.deployments.create(w, r, id)
+		} else if parts[4] == "runtime" {
 			a.applicationRuntime(w, r, id)
+		} else {
+			jsonError(w, http.StatusServiceUnavailable, "runtime_unavailable", "O motor de deploy não está disponível.")
 		}
 		return
 	}
@@ -205,88 +289,69 @@ func (a *app) applicationRouteV2(w http.ResponseWriter, r *http.Request) {
 	jsonError(w, 404, "not_found", "Rota não encontrada.")
 }
 
-func (a *app) deployCompose(w http.ResponseWriter, r *http.Request, id int64) {
-	if r.Method != http.MethodPost {
-		jsonError(w, 405, "method_not_allowed", "Método não permitido.")
+func (a *app) duplicateApplication(w http.ResponseWriter, r *http.Request, id int64) {
+	var projectID int64
+	var name, description, slug, sourceType, configStatus string
+	var revision int
+	if err := a.db.QueryRowContext(r.Context(), `SELECT project_id,name,description,slug,source_type,configuration_status,source_revision FROM applications WHERE id=?`, id).Scan(&projectID, &name, &description, &slug, &sourceType, &configStatus, &revision); err != nil {
+		jsonError(w, http.StatusNotFound, "not_found", "Aplicação não encontrada.")
 		return
 	}
-	a.deployMu.Lock()
-	defer a.deployMu.Unlock()
-	var sourceType, stackName string
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	newName, newSlug := name+" (cópia)", slug+"-copy"
+	for suffix := 2; ; suffix++ {
+		var exists int
+		if a.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM applications WHERE project_id=? AND slug=?)`, projectID, newSlug).Scan(&exists) != nil {
+			jsonError(w, 500, "internal_error", "Não foi possível preparar a cópia.")
+			return
+		}
+		if exists == 0 {
+			break
+		}
+		newSlug = slug + "-copy-" + strconv.Itoa(suffix)
+	}
 	var encrypted, nonce []byte
-	if err := a.db.QueryRow("SELECT source_type,coalesce(docker_stack_name,''),encrypted_payload,encryption_nonce FROM application_sources JOIN applications ON applications.id=application_sources.application_id WHERE application_id=?", id).Scan(&sourceType, &stackName, &encrypted, &nonce); err != nil || sourceType != "compose" {
-		jsonError(w, 422, "compose_required", "Configure uma origem Docker Compose antes de publicar.")
-		return
-	}
-	plain, err := a.cipher.Decrypt(encrypted, nonce)
+	var sourceSource, validationStatus, validationErrors, validationWarnings, summary string
+	var payloadVersion int
+	var checksum string
+	hasSource := a.db.QueryRowContext(r.Context(), `SELECT source_type,encrypted_payload,encryption_nonce,payload_version,checksum,validation_status,validation_errors,validation_warnings,summary_json FROM application_sources WHERE application_id=?`, id).Scan(&sourceSource, &encrypted, &nonce, &payloadVersion, &checksum, &validationStatus, &validationErrors, &validationWarnings, &summary) == nil
+	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
-		jsonError(w, 500, "source_unreadable", "Não foi possível ler o Compose.")
+		jsonError(w, 500, "internal_error", "Não foi possível criar a cópia.")
 		return
 	}
-	var input sourceInput
-	if json.Unmarshal(plain, &input) != nil {
-		jsonError(w, 500, "source_unreadable", "Não foi possível ler o Compose.")
+	defer tx.Rollback()
+	result, err := tx.ExecContext(r.Context(), `INSERT INTO applications(project_id,name,description,slug,source_type,docker_stack_name,status,configuration_status,source_revision,created_at,updated_at) VALUES(?,?,?,?,?,'','not_deployed',?,?,?,?)`, projectID, newName, description, newSlug, sourceType, configStatus, revision, now, now)
+	if err != nil {
+		jsonError(w, 409, "already_exists", "Não foi possível criar a cópia.")
 		return
 	}
-	result := validateSource("compose", input)
-	if !result.Valid {
-		jsonError(w, 422, "compose_invalid", "O Compose precisa ser válido antes da publicação.")
-		return
-	}
-	if stackName == "" {
-		_ = a.db.QueryRow("SELECT slug FROM applications WHERE id=?", id).Scan(&stackName)
-	}
-	if !regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`).MatchString(stackName) {
-		jsonError(w, 422, "invalid_project_name", "O nome do projeto Docker é inválido.")
-		return
-	}
-	var mode string
-	if a.db.QueryRow("SELECT runtime_mode FROM environment_settings WHERE id=1").Scan(&mode) != nil {
-		mode = "standalone"
-	}
-	if mode == "swarm" {
-		state, _ := exec.CommandContext(r.Context(), "docker", "info", "--format", "{{.Swarm.LocalNodeState}}|{{.Swarm.ControlAvailable}}").Output()
-		parts := strings.Split(strings.TrimSpace(string(state)), "|")
-		if len(parts) != 2 || parts[0] != "active" || parts[1] != "true" {
-			jsonError(w, 503, "swarm_unavailable", "O Swarm precisa estar ativo em um manager.")
+	newID, _ := result.LastInsertId()
+	if hasSource {
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO application_sources(application_id,source_type,encrypted_payload,encryption_nonce,payload_version,checksum,validation_status,validation_errors,validation_warnings,summary_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, newID, sourceSource, encrypted, nonce, payloadVersion, checksum, validationStatus, validationErrors, validationWarnings, summary, now, now)
+		if err != nil {
+			jsonError(w, 500, "internal_error", "Não foi possível copiar a origem.")
 			return
 		}
 	}
-	tmp, err := os.CreateTemp("", "stackhost-compose-*.yml")
-	if err != nil {
-		jsonError(w, 500, "internal_error", "Não foi possível preparar o Compose.")
+	if err := tx.Commit(); err != nil {
+		jsonError(w, 500, "internal_error", "Não foi possível concluir a cópia.")
 		return
 	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	_ = tmp.Chmod(0600)
-	if _, err = tmp.WriteString(input.ComposeYAML); err != nil {
-		tmp.Close()
-		jsonError(w, 500, "internal_error", "Não foi possível preparar o Compose.")
+	a.audit(r.Context().Value(userKey{}).(int64), "application.duplicated", "application", newID)
+	a.publish("application.created", map[string]any{"id": newID, "duplicated_from": id})
+	writeJSONStatus(w, http.StatusCreated, map[string]any{"id": newID, "name": newName, "slug": newSlug, "status": "not_deployed"})
+}
+
+func (a *app) deployCompose(w http.ResponseWriter, r *http.Request, id int64) {
+	if a.deployments == nil {
+		jsonError(w, http.StatusServiceUnavailable, "runtime_unavailable", "O motor de deploy não está disponível.")
 		return
 	}
-	tmp.Close()
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
-	var cmd *exec.Cmd
-	if mode == "swarm" {
-		cmd = exec.CommandContext(ctx, "docker", "stack", "deploy", "--compose-file", name, "--prune", stackName)
-	} else {
-		cmd = exec.CommandContext(ctx, "docker", "compose", "--project-name", stackName, "--file", name, "up", "--detach", "--remove-orphans")
-	}
-	cmd.Env = os.Environ()
-	for _, variable := range input.Environment {
-		if variable.Value != "" {
-			cmd.Env = append(cmd.Env, variable.Key+"="+variable.Value)
-		}
-	}
-	if output, runErr := cmd.CombinedOutput(); runErr != nil {
-		_ = output
-		jsonError(w, 502, "deploy_failed", "O Docker não conseguiu publicar a aplicação.")
+	if !a.deployments.requireAdmin(w, r) {
 		return
 	}
-	_, _ = a.db.Exec("UPDATE applications SET status='running',updated_at=? WHERE id=?", time.Now().UTC().Format(time.RFC3339), id)
-	json.NewEncoder(w).Encode(map[string]any{"mode": mode, "status": "running", "project": stackName})
+	a.deployments.create(w, r, id)
 }
 
 func (a *app) applicationRuntime(w http.ResponseWriter, r *http.Request, id int64) {
@@ -306,59 +371,16 @@ func (a *app) applicationRuntime(w http.ResponseWriter, r *http.Request, id int6
 	_ = a.db.QueryRow("SELECT runtime_mode FROM environment_settings WHERE id=1").Scan(&mode)
 	services := []map[string]any{}
 	status := "not_deployed"
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	if mode == "swarm" {
-		cmd := exec.CommandContext(ctx, "docker", "service", "ls", "--filter", "label=com.docker.stack.namespace="+stackName, "--format", "{{json .}}")
-		if output, err := cmd.Output(); err == nil {
-			for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-				var item struct{ Name, Image, Replicas string }
-				if json.Unmarshal([]byte(line), &item) == nil && item.Name != "" {
-					desired, running := splitReplicas(item.Replicas)
-					services = append(services, map[string]any{"name": item.Name, "image": item.Image, "desired": desired, "running": running, "failed": 0})
-				}
-			}
-			if len(services) > 0 {
-				status = "running"
-			}
-		}
-	} else {
-		cmd := exec.CommandContext(ctx, "docker", "compose", "--project-name", stackName, "ps", "--format", "json")
-		if output, err := cmd.Output(); err == nil {
-			var items []struct{ Service, Image, State string }
-			if json.Unmarshal(output, &items) != nil {
-				for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-					var item struct{ Service, Image, State string }
-					if json.Unmarshal([]byte(line), &item) == nil {
-						items = append(items, item)
-					}
-				}
-			}
-			for _, item := range items {
-				services = append(services, map[string]any{"name": item.Service, "image": item.Image, "desired": 1, "running": boolInt(strings.EqualFold(item.State, "running")), "failed": boolInt(!strings.EqualFold(item.State, "running"))})
-			}
-			if len(services) > 0 {
-				status = "running"
+	if a.docker != nil {
+		snapshot, snapshotErr := a.docker.RuntimeSnapshot(r.Context(), mode, stackName)
+		if snapshotErr == nil {
+			status = snapshot.Status
+			for _, service := range snapshot.Services {
+				services = append(services, map[string]any{"name": service.Name, "image": service.Image, "desired": service.Desired, "running": service.Running, "failed": service.Failed, "health": service.Health})
 			}
 		}
 	}
 	json.NewEncoder(w).Encode(map[string]any{"mode": mode, "status": status, "services": services, "name": name, "project": stackName})
-}
-
-func splitReplicas(value string) (int, int) {
-	parts := strings.SplitN(value, "/", 2)
-	if len(parts) != 2 {
-		return 0, 0
-	}
-	desired, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
-	running, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
-	return desired, running
-}
-func boolInt(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
 }
 
 func (a *app) applicationMetadata(w http.ResponseWriter, r *http.Request, id int64) {
@@ -560,11 +582,21 @@ func (a *app) changeApplicationSource(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := a.db.Exec("DELETE FROM application_sources WHERE application_id=?", id); err != nil {
+	tx, err := a.db.Begin()
+	if err != nil {
 		jsonError(w, 500, "internal_error", "Não foi possível trocar a origem.")
 		return
 	}
-	if _, err := a.db.Exec("UPDATE applications SET source_type=?,configuration_status='draft',configured_at=NULL,last_validated_at=NULL,source_revision=source_revision+1,updated_at=? WHERE id=?", input.SourceType, now, id); err != nil {
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM application_sources WHERE application_id=?", id); err != nil {
+		jsonError(w, 500, "internal_error", "Não foi possível trocar a origem.")
+		return
+	}
+	if _, err := tx.Exec("UPDATE applications SET source_type=?,configuration_status='draft',configured_at=NULL,last_validated_at=NULL,source_revision=source_revision+1,updated_at=? WHERE id=?", input.SourceType, now, id); err != nil {
+		jsonError(w, 500, "internal_error", "Não foi possível trocar a origem.")
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		jsonError(w, 500, "internal_error", "Não foi possível trocar a origem.")
 		return
 	}
