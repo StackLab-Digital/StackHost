@@ -1,16 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"database/sql"
-	"fmt"
 	"net/http"
-	"os"
-	"runtime"
 	"sort"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -218,37 +213,9 @@ func resourceAlerts(resources hostResources) []map[string]any {
 
 func hostResourceSnapshot(ctx context.Context, path string) hostResources {
 	result := hostResources{}
-	if runtime.GOOS == "linux" {
-		if file, err := os.Open("/proc/meminfo"); err == nil {
-			defer file.Close()
-			scanner := bufio.NewScanner(file)
-			var total, available uint64
-			for scanner.Scan() {
-				fields := strings.Fields(scanner.Text())
-				if len(fields) >= 2 {
-					value, _ := strconv.ParseUint(fields[1], 10, 64)
-					switch fields[0] {
-					case "MemTotal:":
-						total = value * 1024
-					case "MemAvailable:":
-						available = value * 1024
-					}
-				}
-			}
-			if total > 0 {
-				used := total - available
-				result.MemoryTotalBytes = &total
-				result.MemoryUsedBytes = &used
-			}
-		}
-		if file, err := os.Open("/proc/uptime"); err == nil {
-			defer file.Close()
-			var seconds float64
-			_, _ = fmt.Fscan(file, &seconds)
-			value := uint64(seconds)
-			result.UptimeSeconds = &value
-		}
-	}
+	result.CPUPercent = readCPUPercent(ctx)
+	result.MemoryUsedBytes, result.MemoryTotalBytes = readHostMemory()
+	result.UptimeSeconds = readHostUptime()
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(path, &stat); err == nil {
 		total := stat.Blocks * uint64(stat.Bsize)
