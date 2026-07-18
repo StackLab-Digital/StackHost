@@ -113,7 +113,7 @@ func (a *app) dashboard(w http.ResponseWriter, r *http.Request) {
 	resources := hostResourceSnapshot(ctx, a.dataDir)
 	alerts = append(alerts, resourceAlerts(resources)...)
 	sortAlerts(alerts)
-	writeJSON(w, map[string]any{"docker": snapshot, "host": resources, "applications": applications, "deployments": deployments, "domains": domains, "backups": backup, "alerts": alerts, "activity": recentActivity(ctx, a.db), "projects": scalarInt(ctx, a.db, `SELECT count(*) FROM projects`), "application_count": applications["total"]})
+	writeJSON(w, map[string]any{"docker": snapshot, "host": resources, "applications": applications, "applications_attention": applicationsAttention(ctx, a.db), "deployments": deployments, "domains": domains, "backups": backup, "alerts": alerts, "activity": recentActivity(ctx, a.db), "projects": scalarInt(ctx, a.db, `SELECT count(*) FROM projects`), "application_count": applications["total"]})
 }
 
 func (a *app) runtimeMode(ctx context.Context) (string, error) {
@@ -139,6 +139,23 @@ func recentDeployments(ctx context.Context, db *sql.DB) []any {
 		var status, created, name string
 		if rows.Scan(&id, &applicationID, &status, &revision, &created, &name) == nil {
 			items = append(items, map[string]any{"id": id, "application_id": applicationID, "application": name, "status": status, "revision": revision, "created_at": created})
+		}
+	}
+	return items
+}
+
+func applicationsAttention(ctx context.Context, db *sql.DB) []any {
+	items := []any{}
+	rows, err := db.QueryContext(ctx, `SELECT id,name,COALESCE(status,'not_deployed'),updated_at FROM applications WHERE status IN ('degraded','failed','deploying','stopped') ORDER BY updated_at DESC LIMIT 6`)
+	if err != nil {
+		return items
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var name, status, updated string
+		if rows.Scan(&id, &name, &status, &updated) == nil {
+			items = append(items, map[string]any{"id": id, "name": name, "status": status, "updated_at": updated})
 		}
 	}
 	return items
