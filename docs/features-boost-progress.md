@@ -22,7 +22,7 @@ Início: `2026-07-17 17:27:45 -03`
 
 ## Estado atual
 
-Fases 0–4, 6 e 7 têm implementação funcional nesta branch. O motor de deploy assíncrono agora possui histórico, locks por aplicação, cancelamento, recuperação, readiness real, redaction, ações operacionais e logs limitados. O ingress nativo roda no mesmo binário, mantém cache de rotas, proxy HTTP/HTTPS com `autocert`, cadastro/checagem de domínios, proteção anti-SSRF e rede Docker gerenciada.
+Fases 0–7 têm implementação funcional nesta branch. O motor de deploy assíncrono agora possui histórico, locks por aplicação, cancelamento, recuperação, readiness real, redaction, ações operacionais e logs limitados. O ingress nativo roda no mesmo binário, mantém cache de rotas, proxy HTTP/HTTPS com `autocert`, cadastro/checagem de domínios, proteção anti-SSRF e rede Docker gerenciada.
 
 Cinco arquivos já possuíam alterações locais antes do início desta execução e foram preservados na branch: `cmd/stackhost/applications.go`, `internal/composevalidator/validator.go`, `internal/composevalidator/validator_test.go`, `web/src/style.css` e `web/src/views/ApplicationDetail.vue`.
 
@@ -57,6 +57,6 @@ O build Docker pós-correções passou com a imagem `stackhost:features-boost`. 
 
 ## Último commit validado
 
-`3e3cfb0` — agendamento e retenção local de backups; publicado em `origin/features-boost`.
+`6c8ed5f` — coleta multiplataforma de recursos do host no dashboard; publicado em `origin/features-boost`.
 
 Última validação de código: `gofmt`, `git diff --check`, lint, typecheck, 14 testes frontend, build web, `go test ./...`, `go vet ./...`, `go mod verify`, build Docker pós-scheduler e smoke HTTP da imagem (`ready=200`, migrations 1–9) verdes. A branch foi publicada e permanece sem merge em `develop`.

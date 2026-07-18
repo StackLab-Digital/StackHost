@@ -273,6 +273,27 @@ func TestValidationErrorIncludesFields(t *testing.T) {
 	}
 }
 
+func TestOperationalHealthEndpointsReturnSafeFallbacks(t *testing.T) {
+	a := testApp(t)
+	for name, handler := range map[string]http.HandlerFunc{
+		"health":    a.systemHealth,
+		"resources": a.systemResources,
+	} {
+		w := httptest.NewRecorder()
+		handler(w, httptest.NewRequest(http.MethodGet, "/api/v1/system/"+name, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s status = %d", name, w.Code)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+			t.Fatalf("%s payload: %v", name, err)
+		}
+		if len(payload) == 0 {
+			t.Fatalf("%s payload is empty", name)
+		}
+	}
+}
+
 func TestCleanDatabaseIntegrationFlow(t *testing.T) {
 	a := testApp(t)
 	setup := httptest.NewRecorder()
