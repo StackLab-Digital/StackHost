@@ -47,7 +47,7 @@ function valueFor(item: DetectedVariable) { return props.modelValue.find((variab
         placeholder="Valor"
         :type="draft.secret ? 'password' : 'text'"
       />
-      <Checkbox v-model="draft.secret" label="Secret" />
+      <Checkbox v-model="draft.secret" label="Variável secreta" />
       <button class="secondary" type="button" @click="add">Adicionar</button>
     </div>
     <p v-if="!modelValue.length" class="muted">Nenhuma variável configurada.</p>
