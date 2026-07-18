@@ -38,6 +38,15 @@ const overallMessage = computed(() => {
   const count = (data.value.alerts || []).length;
   return count ? `${count} ${count === 1 ? "item precisa" : "itens precisam"} de atenção` : "Tudo funcionando";
 });
+function deploymentStatusLabel(status: string) {
+  return ({ succeeded: "Concluído", failed: "Falhou", deploying: "Publicando", waiting: "Aguardando", queued: "Na fila", cancelled: "Cancelado", interrupted: "Interrompido" } as Record<string, string>)[status] || status;
+}
+function deploymentStatusClass(status: string) {
+  if (status === "succeeded") return "success";
+  if (status === "failed") return "error";
+  if (["queued", "preparing", "deploying", "waiting"].includes(status)) return "pending";
+  return "neutral";
+}
 const userName = ref("Administrador");
 async function load(silent = false) {
   if (refreshing) return;
@@ -186,7 +195,7 @@ onUnmounted(() => {
       <RouterLink v-for="alert in data.alerts" :key="alert.code" class="alert-row" :to="alert.action_url || '/'"><strong>{{ alert.title }}</strong><span>{{ alert.description }}</span></RouterLink>
     </section>
     <section v-if="data.host" class="panel panel-section resource-health"><div class="section-head"><div><p class="kicker">SAÚDE DO SERVIDOR</p><h2>Recursos do ambiente</h2></div><button class="ghost" type="button" @click="load()">Atualizar</button></div><div class="resource-bars"><div><span>CPU</span><strong>{{ data.host.cpu_percent == null ? "Indisponível" : `${data.host.cpu_percent}%` }}</strong></div><div><span>Memória</span><strong>{{ data.host.memory_used_bytes == null ? "Indisponível" : `${Math.round(data.host.memory_used_bytes / 1073741824 * 10) / 10} GB de ${Math.round(data.host.memory_total_bytes / 1073741824 * 10) / 10} GB` }}</strong></div><div><span>Disco</span><strong>{{ data.host.disk_used_bytes == null ? "Indisponível" : `${Math.round(data.host.disk_used_bytes / 1073741824)} GB de ${Math.round(data.host.disk_total_bytes / 1073741824)} GB` }}</strong></div></div></section>
-    <section v-if="data.deployments?.recent?.length" class="panel panel-section operational-alerts"><div class="section-head"><div><p class="kicker">DEPLOYS</p><h2>Deploys recentes</h2></div><RouterLink class="ghost" to="/activity">Ver atividade</RouterLink></div><RouterLink v-for="item in data.deployments.recent" :key="item.id" class="alert-row" :to="`/applications/${item.application_id}?tab=deployments`"><strong>{{ item.application }} · {{ item.status }}</strong><span>Revisão {{ item.revision }} · {{ new Date(item.created_at).toLocaleString("pt-BR") }}</span></RouterLink></section>
+    <section v-if="data.deployments?.recent?.length" class="panel panel-section operational-alerts"><div class="section-head"><div><p class="kicker">DEPLOYS</p><h2>Deploys recentes</h2></div><RouterLink class="ghost" to="/activity">Ver atividade</RouterLink></div><RouterLink v-for="item in data.deployments.recent" :key="item.id" class="alert-row deploy-row" :to="`/applications/${item.application_id}?tab=deployments`"><strong>{{ item.application }}</strong><span class="deploy-meta"><span class="deploy-badge" :class="deploymentStatusClass(item.status)">{{ deploymentStatusLabel(item.status) }}</span><span>Revisão {{ item.revision }} · {{ new Date(item.created_at).toLocaleString("pt-BR") }}</span></span></RouterLink></section>
     <section v-if="infra.available && !infra.swarm?.active" class="callout">
       <div>
         <p class="kicker">PRÓXIMO PASSO</p>
@@ -351,15 +360,21 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.operational-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.operational-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .operational-card { display: grid; gap: 8px; color: inherit; text-decoration: none; }
 .operational-card strong { font-size: 28px; }
 .operational-card span:last-child, .alert-row span { color: var(--muted, #858b99); font-size: 13px; }
 .operational-alerts { display: grid; gap: 12px; }
 .alert-row { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid #2a2d34; color: inherit; text-decoration: none; }
+.deploy-meta { display: inline-flex; align-items: center; gap: 12px; }
+.deploy-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 9px; border: 1px solid transparent; border-radius: 999px; font-size: 11px; font-weight: 700; line-height: 1; }
+.deploy-badge.success { border-color: #355f45; background: #183323; color: #8fe0a8; }
+.deploy-badge.error { border-color: #6d353b; background: #3a1e23; color: #ff9da4; }
+.deploy-badge.pending { border-color: #655d27; background: #302d18; color: #e8df75; }
+.deploy-badge.neutral { border-color: #454a55; background: #252931; color: #c5cad4; }
 .resource-bars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .resource-bars > div { display: grid; gap: 6px; }
 .resource-bars span { color: var(--muted, #858b99); font-size: 12px; }
-@media (max-width: 800px) { .operational-cards, .resource-bars { grid-template-columns: 1fr 1fr; } .alert-row { display: grid; gap: 4px; } }
+@media (max-width: 800px) { .operational-cards, .resource-bars { grid-template-columns: 1fr 1fr; } .alert-row { display: grid; gap: 4px; } .deploy-meta { justify-content: space-between; } }
 @media (max-width: 480px) { .operational-cards, .resource-bars { grid-template-columns: 1fr; } }
 </style>
