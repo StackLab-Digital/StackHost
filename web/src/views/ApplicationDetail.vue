@@ -7,6 +7,7 @@ import DomainsPanel from "../components/applications/DomainsPanel.vue";
 import DeploymentTimeline from "../components/applications/DeploymentTimeline.vue";
 import EnvironmentVariablesEditor from "../components/applications/EnvironmentVariablesEditor.vue";
 import LogsPanel from "../components/applications/LogsPanel.vue";
+import StoragePanel from "../components/applications/StoragePanel.vue";
 import { api, RequestError } from "../composables/useApi";
 import { useToast } from "../composables/useToast";
 
@@ -66,6 +67,7 @@ type Metrics = {
   current: Array<{ service: string; cpu_percent: number; memory_bytes: number; memory_limit_bytes: number }>;
   history: Array<{ service: string; cpu_percent: number; memory_bytes: number; recorded_at: string }>;
 };
+type StorageVolume = { name: string; type: string; mountpoint?: string; in_use: boolean; size_bytes?: number; used_bytes?: number };
 
 const route = useRoute();
 const router = useRouter();
@@ -379,6 +381,7 @@ onMounted(() => {
           { value: 'overview', label: 'Visão geral' },
           { value: 'source', label: 'Origem' },
           { value: 'variables', label: 'Variáveis' },
+          { value: 'storage', label: 'Storage' },
           { value: 'domains', label: 'Domínios' },
           { value: 'deployments', label: 'Deploys' },
           { value: 'logs', label: 'Logs' },
@@ -474,6 +477,7 @@ onMounted(() => {
         <div class="summary-grid compact"><div v-for="metric in metrics.current" :key="metric.service"><span>{{ metric.service }}</span><strong>{{ metric.cpu_percent.toFixed(1) }}% CPU</strong><small>{{ Math.round(metric.memory_bytes / 1048576) }} MB de memória</small></div></div>
       </article>
     </section>
+    <StoragePanel v-else-if="tab === 'storage'" :application-id="application.id" />
     <section v-else-if="tab === 'source'" class="source-editor">
       <div class="section-head">
         <div>

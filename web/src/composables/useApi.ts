@@ -16,9 +16,12 @@ export async function api<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
+	const headers = options.body instanceof FormData
+		? { ...(options.headers || {}) }
+		: { "Content-Type": "application/json", ...(options.headers || {}) };
   const response = await fetch(path, {
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers,
     ...options,
   });
   if (response.status === 204) return undefined as T;
