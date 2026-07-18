@@ -57,6 +57,6 @@ O build Docker pós-correções passou com a imagem `stackhost:features-boost`. 
 
 ## Último commit validado
 
-`6c8ed5f` — coleta multiplataforma de recursos do host no dashboard; publicado em `origin/features-boost`.
+`cea7d5f` — padronização do Checkbox global e label de variável; publicado em `origin/features-boost`.
 
 Última validação de código: `gofmt`, `git diff --check`, lint, typecheck, 14 testes frontend, build web, `go test ./...`, `go vet ./...`, `go mod verify`, build Docker pós-scheduler e smoke HTTP da imagem (`ready=200`, migrations 1–9) verdes. A branch foi publicada e permanece sem merge em `develop`.
