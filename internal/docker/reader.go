@@ -1,23 +1,31 @@
 package docker
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/StackLab-Digital/StackHost/internal/storage"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/api/types/volume"
 	client "github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 type Reader struct{ client *client.Client }
@@ -509,6 +517,425 @@ func (r *Reader) Volumes(ctx context.Context, limit int) ([]Volume, error) {
 		out = append(out, Volume{Name: item.Name, Driver: item.Driver, Scope: item.Scope})
 	}
 	return out, nil
+}
+
+// ApplicationStorage discovers mounts only from containers belonging to the
+// requested managed application.
+func (r *Reader) ApplicationStorage(ctx context.Context, project, mode string) ([]storage.Volume, error) {
+	if r == nil || r.client == nil || strings.TrimSpace(project) == "" {
+		return nil, fmt.Errorf("storage unavailable")
+	}
+	if mode == "swarm" {
+		return r.swarmApplicationStorage(ctx, project)
+	}
+	label := "com.docker.compose.project=" + project
+	items, err := r.client.ContainerList(ctx, container.ListOptions{All: true, Filters: filters.NewArgs(filters.Arg("label", label))})
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	out := make([]storage.Volume, 0)
+	for _, item := range items {
+		info, inspectErr := r.client.ContainerInspect(ctx, item.ID)
+		if inspectErr != nil {
+			continue
+		}
+		for _, mount := range info.Mounts {
+			key := mount.Name + "\x00" + mount.Destination
+			if mount.Destination == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			kind, name := "bind", mount.Name
+			if string(mount.Type) == "volume" {
+				kind = "named"
+			}
+			if name == "" {
+				name = path.Base(mount.Source)
+			}
+			item := storage.Volume{Name: name, Type: kind, Source: mount.Source, Mountpoint: mount.Destination, InUse: true}
+			if total, used, usageErr := r.StorageUsage(ctx, item, project, mode); usageErr == nil {
+				item.SizeBytes, item.UsedBytes = total, used
+			}
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
+func (r *Reader) swarmApplicationStorage(ctx context.Context, project string) ([]storage.Volume, error) {
+	services, err := r.client.ServiceList(ctx, types.ServiceListOptions{Filters: filters.NewArgs(filters.Arg("label", "com.docker.stack.namespace="+project))})
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	out := make([]storage.Volume, 0)
+	for _, service := range services {
+		if service.Spec.TaskTemplate.ContainerSpec == nil {
+			continue
+		}
+		for _, item := range service.Spec.TaskTemplate.ContainerSpec.Mounts {
+			name := item.Source
+			kind := "bind"
+			if item.Type == mount.TypeVolume {
+				kind = "named"
+			} else {
+				name = path.Base(item.Source)
+			}
+			key := name + "\x00" + item.Target
+			if name == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			volume := storage.Volume{Name: name, Type: kind, Mountpoint: item.Target, InUse: true}
+			if total, used, usageErr := r.StorageUsage(ctx, volume, project, "swarm"); usageErr == nil {
+				volume.SizeBytes, volume.UsedBytes = total, used
+			}
+			out = append(out, volume)
+		}
+	}
+	return out, nil
+}
+
+func (r *Reader) StorageUsage(ctx context.Context, item storage.Volume, project, mode string) (int64, int64, error) {
+	mount, err := r.storageMountFor(ctx, project, mode, item.Name)
+	if err != nil {
+		return 0, 0, err
+	}
+	created, err := r.client.ContainerExecCreate(ctx, mount.containerID, types.ExecConfig{Cmd: []string{"df", "-Pk", mount.destination}, AttachStdout: true, AttachStderr: true})
+	if err != nil {
+		return 0, 0, err
+	}
+	response, err := r.client.ContainerExecAttach(ctx, created.ID, types.ExecStartCheck{})
+	if err != nil {
+		return 0, 0, err
+	}
+	defer response.Close()
+	var stdout, stderr bytes.Buffer
+	if _, err = stdcopy.StdCopy(&stdout, &stderr, response.Reader); err != nil {
+		return 0, 0, err
+	}
+	result, err := r.client.ContainerExecInspect(ctx, created.ID)
+	if err != nil {
+		return 0, 0, err
+	}
+	if result.ExitCode != 0 {
+		return 0, 0, fmt.Errorf("usage unavailable")
+	}
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(lines) < 2 {
+		return 0, 0, fmt.Errorf("usage unavailable")
+	}
+	fields := strings.Fields(lines[len(lines)-1])
+	if len(fields) < 3 {
+		return 0, 0, fmt.Errorf("usage unavailable")
+	}
+	total, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+	used, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+	return total * 1024, used * 1024, nil
+}
+
+type storageMount struct{ containerID, destination string }
+
+func mountTarget(destination, relative string) (string, error) {
+	clean, err := storage.SafePath(relative)
+	if err != nil {
+		return "", err
+	}
+	base := path.Clean(destination)
+	if clean == "." {
+		return base, nil
+	}
+	target := path.Join(base, clean)
+	if target != base && !strings.HasPrefix(target, base+"/") {
+		return "", fmt.Errorf("path escapes mount")
+	}
+	return target, nil
+}
+
+func (r *Reader) storageExec(ctx context.Context, project, mode, name, relative string, command ...string) error {
+	clean, err := storage.SafePath(relative)
+	if err != nil {
+		return err
+	}
+	mount, err := r.storageMountFor(ctx, project, mode, name)
+	if err != nil {
+		return err
+	}
+	target, err := mountTarget(mount.destination, clean)
+	if err != nil {
+		return err
+	}
+	config := types.ExecConfig{Cmd: append(command, target)}
+	created, err := r.client.ContainerExecCreate(ctx, mount.containerID, config)
+	if err != nil {
+		return err
+	}
+	if err = r.client.ContainerExecStart(ctx, created.ID, types.ExecStartCheck{}); err != nil {
+		return err
+	}
+	result, err := r.client.ContainerExecInspect(ctx, created.ID)
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("storage operation failed")
+	}
+	return nil
+}
+
+func (r *Reader) StorageFolder(ctx context.Context, project, mode, name, relative string) error {
+	return r.storageExec(ctx, project, mode, name, relative, "mkdir", "-p", "--")
+}
+func (r *Reader) StorageDelete(ctx context.Context, project, mode, name, relative string) error {
+	clean, err := storage.SafePath(relative)
+	if err != nil || clean == "." {
+		return fmt.Errorf("invalid delete path")
+	}
+	return r.storageExec(ctx, project, mode, name, clean, "rm", "-rf", "--")
+}
+func (r *Reader) StorageRename(ctx context.Context, project, mode, name, source, target string) error {
+	sourceClean, err := storage.SafePath(source)
+	if err != nil || sourceClean == "." {
+		return fmt.Errorf("invalid source path")
+	}
+	targetClean, err := storage.SafePath(target)
+	if err != nil || targetClean == "." {
+		return fmt.Errorf("invalid target path")
+	}
+	mount, err := r.storageMountFor(ctx, project, mode, name)
+	if err != nil {
+		return err
+	}
+	sourcePath, err := mountTarget(mount.destination, sourceClean)
+	if err != nil {
+		return err
+	}
+	targetPath, err := mountTarget(mount.destination, targetClean)
+	if err != nil {
+		return err
+	}
+	config := types.ExecConfig{Cmd: []string{"mv", "--", sourcePath, targetPath}}
+	created, err := r.client.ContainerExecCreate(ctx, mount.containerID, config)
+	if err != nil {
+		return err
+	}
+	if err = r.client.ContainerExecStart(ctx, created.ID, types.ExecStartCheck{}); err != nil {
+		return err
+	}
+	result, err := r.client.ContainerExecInspect(ctx, created.ID)
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("storage operation failed")
+	}
+	return nil
+}
+func (r *Reader) StorageUpload(ctx context.Context, project, mode, name, relative string, content []byte, filename string) error {
+	clean, err := storage.SafePath(relative)
+	if err != nil {
+		return err
+	}
+	base, err := storage.SafePath(filename)
+	if err != nil || base == "." || strings.Contains(base, "/") {
+		return fmt.Errorf("invalid filename")
+	}
+	mount, err := r.storageMountFor(ctx, project, mode, name)
+	if err != nil {
+		return err
+	}
+	target, err := mountTarget(mount.destination, clean)
+	if err != nil {
+		return err
+	}
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
+	if err = tw.WriteHeader(&tar.Header{Name: base, Mode: 0600, Size: int64(len(content))}); err != nil {
+		return err
+	}
+	if _, err = tw.Write(content); err != nil {
+		return err
+	}
+	if err = tw.Close(); err != nil {
+		return err
+	}
+	return r.client.CopyToContainer(ctx, mount.containerID, target, &archive, types.CopyToContainerOptions{})
+}
+
+func (r *Reader) StorageRestore(ctx context.Context, project, mode, name string, archive []byte) error {
+	if len(archive) == 0 || int64(len(archive)) > 256<<20 {
+		return fmt.Errorf("invalid backup")
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		return err
+	}
+	var tarData bytes.Buffer
+	tr := tar.NewReader(gz)
+	tw := tar.NewWriter(&tarData)
+	for {
+		header, nextErr := tr.Next()
+		if nextErr == io.EOF {
+			break
+		}
+		if nextErr != nil {
+			return nextErr
+		}
+		clean, pathErr := storage.SafePath(header.Name)
+		if pathErr != nil || clean == "." || header.Typeflag == tar.TypeSymlink || header.Typeflag == tar.TypeLink {
+			return fmt.Errorf("invalid backup path")
+		}
+		header.Name = clean
+		if err = tw.WriteHeader(header); err != nil {
+			return err
+		}
+		if _, err = io.Copy(tw, io.LimitReader(tr, 256<<20)); err != nil {
+			return err
+		}
+	}
+	_ = gz.Close()
+	if err = tw.Close(); err != nil {
+		return err
+	}
+	mount, err := r.storageMountFor(ctx, project, mode, name)
+	if err != nil {
+		return err
+	}
+	return r.client.CopyToContainer(ctx, mount.containerID, mount.destination, &tarData, types.CopyToContainerOptions{})
+}
+
+func (r *Reader) storageMountFor(ctx context.Context, project, mode, name string) (storageMount, error) {
+	if r == nil || r.client == nil || strings.TrimSpace(project) == "" {
+		return storageMount{}, fmt.Errorf("storage unavailable")
+	}
+	if mode == "swarm" {
+		return r.swarmStorageMountFor(ctx, project, name)
+	}
+	label := "com.docker.compose.project=" + project
+	items, err := r.client.ContainerList(ctx, container.ListOptions{All: true, Filters: filters.NewArgs(filters.Arg("label", label))})
+	if err != nil {
+		return storageMount{}, err
+	}
+	for _, item := range items {
+		info, inspectErr := r.client.ContainerInspect(ctx, item.ID)
+		if inspectErr != nil {
+			continue
+		}
+		for _, mount := range info.Mounts {
+			mountName := mount.Name
+			if mountName == "" {
+				mountName = path.Base(mount.Source)
+			}
+			if mountName == name {
+				return storageMount{containerID: item.ID, destination: mount.Destination}, nil
+			}
+		}
+	}
+	return storageMount{}, fmt.Errorf("volume not found")
+}
+
+func (r *Reader) swarmStorageMountFor(ctx context.Context, project, name string) (storageMount, error) {
+	services, err := r.client.ServiceList(ctx, types.ServiceListOptions{Filters: filters.NewArgs(filters.Arg("label", "com.docker.stack.namespace="+project))})
+	if err != nil {
+		return storageMount{}, err
+	}
+	for _, service := range services {
+		if service.Spec.TaskTemplate.ContainerSpec == nil {
+			continue
+		}
+		matched := ""
+		for _, item := range service.Spec.TaskTemplate.ContainerSpec.Mounts {
+			candidate := item.Source
+			if item.Type != mount.TypeVolume {
+				candidate = path.Base(item.Source)
+			}
+			if candidate == name {
+				matched = item.Target
+				break
+			}
+		}
+		if matched == "" {
+			continue
+		}
+		tasks, taskErr := r.client.TaskList(ctx, types.TaskListOptions{Filters: filters.NewArgs(filters.Arg("service", service.ID), filters.Arg("desired-state", "running"))})
+		if taskErr != nil {
+			return storageMount{}, taskErr
+		}
+		for _, task := range tasks {
+			if task.Status.ContainerStatus != nil && task.Status.ContainerStatus.ContainerID != "" {
+				return storageMount{containerID: task.Status.ContainerStatus.ContainerID, destination: matched}, nil
+			}
+		}
+	}
+	return storageMount{}, fmt.Errorf("volume not found")
+}
+
+// StorageArchive reads a bounded Docker archive from a discovered mount. The
+// client path is always relative to the mount destination.
+func (r *Reader) StorageArchive(ctx context.Context, project, mode, name, relative string, maxBytes int64) ([]storage.File, error) {
+	clean, err := storage.SafePath(relative)
+	if err != nil {
+		return nil, err
+	}
+	mount, err := r.storageMountFor(ctx, project, mode, name)
+	if err != nil {
+		return nil, err
+	}
+	target, err := mountTarget(mount.destination, clean)
+	if err != nil {
+		return nil, err
+	}
+	reader, _, err := r.client.CopyFromContainer(ctx, mount.containerID, target)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	limited := io.LimitReader(reader, maxBytes+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("file too large")
+	}
+	tr := tar.NewReader(bytes.NewReader(data))
+	files := []storage.File{}
+	for {
+		hdr, readErr := tr.Next()
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+		name := strings.TrimPrefix(path.Clean(hdr.Name), "./")
+		if name == "." {
+			continue
+		}
+		if _, pathErr := storage.SafePath(name); pathErr != nil || hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
+			return nil, fmt.Errorf("unsafe archive entry")
+		}
+		kind := "file"
+		if hdr.FileInfo().IsDir() {
+			kind = "directory"
+		}
+		content := []byte(nil)
+		if kind == "file" {
+			content, err = io.ReadAll(io.LimitReader(tr, maxBytes+1))
+			if err != nil || int64(len(content)) > maxBytes {
+				return nil, fmt.Errorf("file too large")
+			}
+		}
+		files = append(files, storage.File{Entry: storage.Entry{Name: path.Base(name), Path: name, Type: kind, SizeBytes: hdr.Size, Modified: hdr.ModTime.UTC().Format(time.RFC3339)}, Content: content})
+	}
+	return files, nil
 }
 
 func (r *Reader) Networks(ctx context.Context, limit int) ([]Network, error) {

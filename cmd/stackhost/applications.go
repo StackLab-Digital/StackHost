@@ -181,6 +181,10 @@ func (a *app) applicationRouteV2(w http.ResponseWriter, r *http.Request) {
 		a.applicationSource(w, r, id)
 		return
 	}
+	if len(parts) >= 5 && parts[4] == "storage" {
+		a.applicationStorage(w, r, id)
+		return
+	}
 	if len(parts) == 5 && parts[4] == "deployments" {
 		if a.deployments == nil {
 			jsonError(w, http.StatusServiceUnavailable, "runtime_unavailable", "O motor de deploy não está disponível.")

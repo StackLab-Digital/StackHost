@@ -6,6 +6,8 @@ Início: `2026-07-17 17:27:45 -03`
 
 ## Fases
 
+- [x] Fase Storage Manager — descoberta, explorer, operações, métricas de filesystem e validações Docker entregues
+
 - [x] Fase 0 — Auditoria e estabilização
 - [x] Fase 1 — Motor de deploy robusto
 - [x] Fase 2 — Proxy nativo e domínios (base operacional entregue; renovação ACME e propagação DNS seguem observáveis)
@@ -23,6 +25,8 @@ Início: `2026-07-17 17:27:45 -03`
 ## Estado atual
 
 Fases 0–7 têm implementação funcional nesta branch. O motor de deploy assíncrono agora possui histórico, locks por aplicação, cancelamento, recuperação, readiness real, redaction, ações operacionais e logs limitados. O ingress nativo roda no mesmo binário, mantém cache de rotas, proxy HTTP/HTTPS com `autocert`, cadastro/checagem de domínios, proteção anti-SSRF e rede Docker gerenciada.
+
+O Storage Manager agora descobre mounts por aplicação em Compose e Swarm, expõe explorer seguro com operações de arquivos, métricas de filesystem e backups por volume. A validação opt-in passou com named/bind mounts, PostgreSQL, Redis, WordPress, Nginx e um serviço Swarm; o teste fake mantém a CI independente de Docker real.
 
 Cinco arquivos já possuíam alterações locais antes do início desta execução e foram preservados na branch: `cmd/stackhost/applications.go`, `internal/composevalidator/validator.go`, `internal/composevalidator/validator_test.go`, `web/src/style.css` e `web/src/views/ApplicationDetail.vue`.
 
