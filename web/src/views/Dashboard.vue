@@ -47,6 +47,15 @@ function deploymentStatusClass(status: string) {
   if (["queued", "preparing", "deploying", "waiting"].includes(status)) return "pending";
   return "neutral";
 }
+function backupStatusLabel(status: string) {
+  return ({ ready: "Pronto", failed: "Falhou", running: "Em execução", pending: "Aguardando" } as Record<string, string>)[status] || status || "Indisponível";
+}
+function backupStatusClass(status: string) {
+  if (status === "ready") return "success";
+  if (status === "failed") return "error";
+  if (["running", "pending"].includes(status)) return "pending";
+  return "neutral";
+}
 const userName = ref("Administrador");
 async function load(silent = false) {
   if (refreshing) return;
@@ -188,7 +197,7 @@ onUnmounted(() => {
       <RouterLink class="panel operational-card" to="/applications"><span class="label">APLICAÇÕES</span><strong>{{ data.applications.total }}</strong><span>{{ data.applications.running || 0 }} em execução · {{ data.applications.degraded || 0 }} degradadas</span></RouterLink>
       <RouterLink class="panel operational-card" to="/applications"><span class="label">DEPLOYS</span><strong>{{ data.deployments?.running || 0 }}</strong><span>{{ data.deployments?.failed_last_24h || 0 }} falhos em 24h</span></RouterLink>
       <RouterLink class="panel operational-card" to="/applications"><span class="label">DOMÍNIOS</span><strong>{{ data.domains?.active || 0 }}</strong><span>{{ data.domains?.pending || 0 }} pendentes · {{ data.domains?.errors || 0 }} com erro</span></RouterLink>
-      <RouterLink class="panel operational-card" to="/settings"><span class="label">BACKUPS</span><strong>{{ data.backups?.last_status || "—" }}</strong><span>{{ data.backups?.last_created_at ? new Date(data.backups.last_created_at).toLocaleString("pt-BR") : "Nenhum backup registrado" }}</span></RouterLink>
+      <RouterLink class="panel operational-card" to="/settings"><span class="label">BACKUPS</span><strong><span class="deploy-badge" :class="backupStatusClass(data.backups?.last_status)">{{ backupStatusLabel(data.backups?.last_status) }}</span></strong><span>{{ data.backups?.last_created_at ? new Date(data.backups.last_created_at).toLocaleString("pt-BR") : "Nenhum backup registrado" }}</span></RouterLink>
     </section>
     <section v-if="data.alerts?.length" class="panel panel-section operational-alerts">
       <div class="section-head"><div><p class="kicker">ATENÇÃO</p><h2>Alertas operacionais</h2></div></div>
@@ -216,7 +225,7 @@ onUnmounted(() => {
       </article>
       <article>
         <span class="label">APLICAÇÕES</span
-        ><strong>{{ data.applications }}</strong>
+        ><strong>{{ data.applications?.total ?? data.applications }}</strong>
         <p class="muted">Em todos os projetos</p>
       </article>
       <article>
