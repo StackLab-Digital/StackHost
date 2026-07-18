@@ -254,28 +254,27 @@ onUnmounted(() => {
         <p class="muted">Conexões Docker</p>
       </article>
     </div>
-    <section class="resource-strip">
+    <section v-if="infra.swarm?.active" class="resource-strip swarm-summary">
       <div>
-        <span class="label">STACKS</span
-        ><strong>{{ infra.stacks ?? "Não disponível" }}</strong>
+        <span class="label">NÓS</span><strong>{{ infra.swarm.nodes }}</strong>
       </div>
       <div>
-        <span class="label">NÓS DO SWARM</span
-        ><strong>{{
-          infra.swarm?.active ? infra.swarm.nodes : "Não disponível"
-        }}</strong>
+        <span class="label">MANAGERS</span><strong>{{ infra.swarm.managers }}</strong>
       </div>
       <div>
-        <span class="label">SERVIÇOS</span
-        ><strong>{{
-          infra.swarm?.active ? infra.swarm.services : "Não disponível"
-        }}</strong>
+        <span class="label">WORKERS</span><strong>{{ infra.swarm.workers }}</strong>
       </div>
       <div>
-        <span class="label">TASKS COM FALHA</span
-        ><strong>{{
-          infra.swarm?.active ? infra.swarm.tasks_failed : "Não disponível"
-        }}</strong>
+        <span class="label">SERVIÇOS</span><strong>{{ infra.swarm.services }}</strong>
+      </div>
+      <div>
+        <span class="label">TASKS ATIVAS</span><strong>{{ infra.swarm.tasks_running }}</strong>
+      </div>
+      <div>
+        <span class="label">TASKS PENDENTES</span><strong>{{ infra.swarm.tasks_pending }}</strong>
+      </div>
+      <div>
+        <span class="label">TASKS COM FALHA</span><strong>{{ infra.swarm.tasks_failed }}</strong>
       </div>
     </section>
     <div class="split-panels">
@@ -385,7 +384,8 @@ onUnmounted(() => {
 .deploy-badge.neutral { border-color: #454a55; background: #252931; color: #c5cad4; }
 .resource-bars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .resource-bars > div { display: grid; gap: 6px; }
+.swarm-summary { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .resource-bars span { color: var(--muted, #858b99); font-size: 12px; }
-@media (max-width: 800px) { .resource-bars { grid-template-columns: 1fr 1fr; } .alert-row { display: grid; gap: 4px; } .deploy-meta { justify-content: space-between; } }
-@media (max-width: 480px) { .resource-bars { grid-template-columns: 1fr; } }
+@media (max-width: 800px) { .resource-bars, .swarm-summary { grid-template-columns: repeat(2, 1fr); } .alert-row { display: grid; gap: 4px; } .deploy-meta { justify-content: space-between; } }
+@media (max-width: 480px) { .resource-bars, .swarm-summary { grid-template-columns: 1fr; } }
 </style>
