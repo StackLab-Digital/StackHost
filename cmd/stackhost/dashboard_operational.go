@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -73,13 +74,16 @@ func (a *app) dashboard(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 	}
 	deployments := map[string]any{"running": scalarInt(ctx, a.db, `SELECT count(*) FROM deployments WHERE status IN ('queued','preparing','deploying','waiting')`), "failed_last_24h": scalarInt(ctx, a.db, `SELECT count(*) FROM deployments WHERE status='failed' AND created_at >= ?`, time.Now().UTC().Add(-24*time.Hour).Format(time.RFC3339)), "recent": recentDeployments(ctx, a.db)}
-	domains := map[string]int{"total": 0, "active": 0, "pending": 0, "errors": 0}
-	if rows, err := a.db.QueryContext(ctx, `SELECT status, count(*) FROM application_domains GROUP BY status`); err == nil {
+	domains := map[string]int{"total": 0, "active": 0, "pending": 0, "errors": 0, "certificate_errors": 0}
+	if rows, err := a.db.QueryContext(ctx, `SELECT status, certificate_status, count(*) FROM application_domains GROUP BY status, certificate_status`); err == nil {
 		for rows.Next() {
-			var status string
+			var status, certificateStatus string
 			var count int
-			_ = rows.Scan(&status, &count)
+			_ = rows.Scan(&status, &certificateStatus, &count)
 			domains["total"] += count
+			if certificateStatus == "error" || certificateStatus == "failed" {
+				domains["certificate_errors"] += count
+			}
 			switch status {
 			case "active", "ready":
 				domains["active"] += count
@@ -91,14 +95,29 @@ func (a *app) dashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		rows.Close()
 	}
-	backup := map[string]any{"last_status": "", "last_created_at": "", "next_scheduled_at": ""}
+	backup := map[string]any{"last_status": "", "last_created_at": "", "next_scheduled_at": "", "schedule": "manual"}
 	var backupStatus, backupCreated string
 	if a.db.QueryRowContext(ctx, `SELECT status,created_at FROM backups ORDER BY created_at DESC LIMIT 1`).Scan(&backupStatus, &backupCreated) == nil {
 		backup["last_status"] = backupStatus
 		backup["last_created_at"] = backupCreated
 	}
-	alerts := dashboardAlerts(applications, domains, deployments, snapshot)
+	var backupSchedule string
+	if a.db.QueryRowContext(ctx, `SELECT schedule FROM backup_settings WHERE id=1`).Scan(&backupSchedule) == nil {
+		backup["schedule"] = backupSchedule
+		if backupSchedule != "manual" && backupCreated != "" {
+			if created, err := time.Parse(time.RFC3339Nano, backupCreated); err == nil {
+				interval := 24 * time.Hour
+				if backupSchedule == "weekly" {
+					interval = 7 * 24 * time.Hour
+				}
+				backup["next_scheduled_at"] = created.Add(interval).Format(time.RFC3339Nano)
+			}
+		}
+	}
+	alerts := dashboardAlerts(applications, domains, deployments, snapshot, backup)
 	resources := hostResourceSnapshot(ctx, a.dataDir)
+	alerts = append(alerts, resourceAlerts(resources)...)
+	sortAlerts(alerts)
 	writeJSON(w, map[string]any{"docker": snapshot, "host": resources, "applications": applications, "deployments": deployments, "domains": domains, "backups": backup, "alerts": alerts, "activity": recentActivity(ctx, a.db), "projects": scalarInt(ctx, a.db, `SELECT count(*) FROM projects`), "application_count": applications["total"]})
 }
 
@@ -146,10 +165,15 @@ func recentActivity(ctx context.Context, db *sql.DB) []any {
 	return items
 }
 
-func dashboardAlerts(applications, domains map[string]int, deployments, docker map[string]any) []map[string]any {
+func dashboardAlerts(applications, domains map[string]int, deployments, docker, backup map[string]any) []map[string]any {
 	alerts := []map[string]any{}
 	if available, _ := docker["available"].(bool); !available {
 		alerts = append(alerts, map[string]any{"severity": "critical", "code": "docker_unavailable", "title": "Docker indisponível", "description": "O daemon Docker não respondeu.", "resource_type": "system", "action_url": "/infrastructure"})
+	}
+	if mode, _ := docker["runtime_mode"].(string); mode == "swarm" {
+		if active, _ := docker["swarm_active"].(bool); !active {
+			alerts = append(alerts, map[string]any{"severity": "critical", "code": "swarm_unavailable", "title": "Swarm indisponível", "description": "O modo Swarm está selecionado, mas o cluster não está ativo.", "resource_type": "system", "action_url": "/infrastructure?tab=swarm"})
+		}
 	}
 	if n := applications["degraded"]; n > 0 {
 		alerts = append(alerts, map[string]any{"severity": "warning", "code": "application_degraded", "title": "Aplicação degradada", "description": strconv.Itoa(n) + " aplicação(ões) precisam de atenção.", "resource_type": "application", "action_url": "/applications"})
@@ -159,6 +183,35 @@ func dashboardAlerts(applications, domains map[string]int, deployments, docker m
 	}
 	if n := domains["errors"]; n > 0 {
 		alerts = append(alerts, map[string]any{"severity": "warning", "code": "domain_error", "title": "Domínio com erro", "description": strconv.Itoa(n) + " domínio(s) apresentam erro.", "resource_type": "domain", "action_url": "/applications"})
+	}
+	if n := domains["certificate_errors"]; n > 0 {
+		alerts = append(alerts, map[string]any{"severity": "warning", "code": "certificate_error", "title": "Certificado com erro", "description": strconv.Itoa(n) + " certificado(s) apresentam erro.", "resource_type": "domain", "action_url": "/applications"})
+	}
+	if status, _ := backup["last_status"].(string); status == "failed" {
+		alerts = append(alerts, map[string]any{"severity": "warning", "code": "backup_failed", "title": "Backup falhou", "description": "O último backup não foi concluído.", "resource_type": "backup", "action_url": "/settings"})
+	}
+	if next, _ := backup["next_scheduled_at"].(string); next != "" {
+		if scheduled, err := time.Parse(time.RFC3339Nano, next); err == nil && time.Now().After(scheduled) {
+			alerts = append(alerts, map[string]any{"severity": "warning", "code": "backup_overdue", "title": "Backup atrasado", "description": "O backup agendado ainda não foi executado.", "resource_type": "backup", "action_url": "/settings"})
+		}
+	}
+	return alerts
+}
+
+func sortAlerts(alerts []map[string]any) {
+	priority := map[string]int{"critical": 0, "warning": 1, "info": 2}
+	sort.SliceStable(alerts, func(i, j int) bool {
+		return priority[alerts[i]["severity"].(string)] < priority[alerts[j]["severity"].(string)]
+	})
+}
+
+func resourceAlerts(resources hostResources) []map[string]any {
+	alerts := []map[string]any{}
+	if resources.DiskTotalBytes != nil && resources.DiskUsedBytes != nil && *resources.DiskTotalBytes > 0 && float64(*resources.DiskUsedBytes)/float64(*resources.DiskTotalBytes) >= .85 {
+		alerts = append(alerts, map[string]any{"severity": "warning", "code": "disk_high", "title": "Espaço em disco baixo", "description": "O volume de dados está acima de 85% de utilização.", "resource_type": "system", "action_url": "/infrastructure"})
+	}
+	if resources.MemoryTotalBytes != nil && resources.MemoryUsedBytes != nil && *resources.MemoryTotalBytes > 0 && float64(*resources.MemoryUsedBytes)/float64(*resources.MemoryTotalBytes) >= .90 {
+		alerts = append(alerts, map[string]any{"severity": "warning", "code": "memory_high", "title": "Memória acima de 90%", "description": "A memória disponível do host está baixa.", "resource_type": "system", "action_url": "/infrastructure"})
 	}
 	return alerts
 }
