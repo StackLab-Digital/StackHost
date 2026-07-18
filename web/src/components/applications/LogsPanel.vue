@@ -2,6 +2,7 @@
 import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { api } from "../../composables/useApi";
 import { useToast } from "../../composables/useToast";
+import Checkbox from "../ui/Checkbox.vue";
 
 const props = defineProps<{ applicationId: number }>();
 const toast = useToast();
@@ -55,7 +56,7 @@ onUnmounted(stopFollowing);
 <template>
   <section class="logs-panel">
     <div class="section-head"><div><p class="kicker">LOGS</p><h2>Saída operacional</h2><p class="muted">{{ connected ? "Conectado em tempo real" : "Histórico do serviço" }}</p></div><div class="log-actions"><button class="ghost" type="button" :disabled="!logs" @click="copyLogs">Copiar</button><button class="ghost" type="button" :disabled="!logs" @click="downloadLogs">Baixar</button><button class="ghost" type="button" :disabled="!logs" @click="logs = ''">Limpar</button><button class="secondary" type="button" :class="{ active: following }" @click="toggleFollowing">{{ following ? "Pausar" : "Acompanhar" }}</button></div></div>
-    <div class="logs-toolbar"><label>Serviço<select v-model="service"><option v-for="item in services" :key="item" :value="item">{{ item }}</option></select></label><label>Linhas<select v-model.number="tail"><option :value="100">100</option><option :value="500">500</option><option :value="1000">1000</option></select></label><label>Buscar<input v-model="query" type="search" placeholder="Filtrar linhas" /></label><label class="checkbox"><input v-model="autoScroll" type="checkbox" /> Auto-scroll</label><button class="ghost" type="button" @click="loadLogs">Atualizar</button></div>
+    <div class="logs-toolbar"><label>Serviço<select v-model="service"><option v-for="item in services" :key="item" :value="item">{{ item }}</option></select></label><label>Linhas<select v-model.number="tail"><option :value="100">100</option><option :value="500">500</option><option :value="1000">1000</option></select></label><label>Buscar<input v-model="query" type="search" placeholder="Filtrar linhas" /></label><Checkbox v-model="autoScroll" label="Auto-scroll" /><button class="ghost" type="button" @click="loadLogs">Atualizar</button></div>
     <pre ref="viewer" class="logs-viewer" :aria-busy="loading">{{ (logs.split("\n").filter((line) => !query || line.toLowerCase().includes(query.toLowerCase())).join("\n")) || "Nenhum log disponível para este serviço." }}</pre>
   </section>
 </template>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import BaseModal from "../ui/BaseModal.vue";
+import Checkbox from "../ui/Checkbox.vue";
 import { api, RequestError } from "../../composables/useApi";
 import { useToast } from "../../composables/useToast";
 
@@ -111,8 +112,8 @@ onMounted(load);
         <label v-if="props.services.length">Serviço<select v-model="serviceName" required><option v-for="service in props.services" :key="service" :value="service">{{ service }}</option></select></label>
         <label v-else>Serviço<input v-model="serviceName" required placeholder="web" /></label>
         <label>Porta<input v-model.number="targetPort" type="number" min="1" max="65535" required /></label>
-        <label class="checkbox"><input v-model="httpsEnabled" type="checkbox" /> HTTPS automático</label>
-        <label class="checkbox"><input v-model="redirectHttps" type="checkbox" /> Redirecionar HTTP</label>
+        <Checkbox v-model="httpsEnabled" label="HTTPS automático" />
+        <Checkbox v-model="redirectHttps" label="Redirecionar HTTP" />
       </form>
       <template #footer><button class="secondary" type="button" :disabled="saving" @click="addOpen = false">Cancelar</button><button class="primary" form="add-domain-form" type="submit" :disabled="saving">{{ saving ? "Salvando…" : "Adicionar domínio" }}</button></template>
     </BaseModal>
@@ -124,7 +125,7 @@ onMounted(load);
 .domain-form { display: grid; grid-template-columns: minmax(220px, 1.5fr) minmax(140px, 1fr) 110px; gap: 14px; align-items: end; }
 .domain-form label { display: grid; gap: 7px; color: #b9bec9; font-size: 12px; }
 .domain-form input, .domain-form select { min-width: 0; border: 1px solid #343842; border-radius: 7px; padding: 10px 11px; background: #17191e; color: #e7e9ee; }
-.domain-form .checkbox { display: flex; align-items: center; gap: 7px; }
+.domain-form .checkbox { display: flex; align-items: center; gap: 7px; font-size: 14px; line-height: 1.2; }
 .domain-form .checkbox input { accent-color: #e8f55b; }
 .domain-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .domain-list li { display: grid; gap: 10px; padding: 16px; border: 1px solid #2a2d34; border-radius: 10px; background: #17191e; }

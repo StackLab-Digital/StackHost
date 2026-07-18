@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import Checkbox from "../ui/Checkbox.vue";
 type Variable = {
   key: string;
   value: string;
@@ -46,9 +47,7 @@ function valueFor(item: DetectedVariable) { return props.modelValue.find((variab
         placeholder="Valor"
         :type="draft.secret ? 'password' : 'text'"
       />
-      <label class="check"
-        ><input v-model="draft.secret" type="checkbox" /> Secret</label
-      >
+      <Checkbox v-model="draft.secret" label="Secret" />
       <button class="secondary" type="button" @click="add">Adicionar</button>
     </div>
     <p v-if="!modelValue.length" class="muted">Nenhuma variável configurada.</p>
