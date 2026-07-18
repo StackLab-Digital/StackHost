@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
+import BaseModal from "../ui/BaseModal.vue";
 import { api, RequestError } from "../../composables/useApi";
 import { useToast } from "../../composables/useToast";
 
@@ -27,6 +28,7 @@ const serviceName = ref("");
 const targetPort = ref(80);
 const httpsEnabled = ref(true);
 const redirectHttps = ref(true);
+const addOpen = ref(false);
 
 async function load() {
   loading.value = true;
@@ -48,6 +50,7 @@ async function addDomain() {
       body: JSON.stringify({ hostname: hostname.value, service_name: serviceName.value, target_port: targetPort.value, https_enabled: httpsEnabled.value, redirect_https: redirectHttps.value }),
     });
     hostname.value = "";
+    addOpen.value = false;
     toast.success("Domínio cadastrado.");
     await load();
   } catch (error) {
@@ -55,6 +58,10 @@ async function addDomain() {
   } finally {
     saving.value = false;
   }
+}
+function openAddDomain() {
+  if (!serviceName.value && props.services.length) serviceName.value = props.services[0];
+  addOpen.value = true;
 }
 async function checkDomain(domain: Domain) {
   try {
@@ -87,16 +94,8 @@ onMounted(load);
         <h2>Endereços públicos</h2>
         <p class="muted">O StackHost controla o proxy, HTTPS e a rota até o serviço real.</p>
       </div>
+      <button class="primary" type="button" @click="openAddDomain">Adicionar domínio</button>
     </div>
-    <form class="domain-form" @submit.prevent="addDomain">
-      <label>Domínio<input v-model="hostname" required placeholder="app.exemplo.com" /></label>
-      <label v-if="props.services.length">Serviço<select v-model="serviceName" required><option v-for="service in props.services" :key="service" :value="service">{{ service }}</option></select></label>
-      <label v-else>Serviço<input v-model="serviceName" required placeholder="web" /></label>
-      <label>Porta<input v-model.number="targetPort" type="number" min="1" max="65535" required /></label>
-      <label class="checkbox"><input v-model="httpsEnabled" type="checkbox" /> HTTPS automático</label>
-      <label class="checkbox"><input v-model="redirectHttps" type="checkbox" /> Redirecionar HTTP</label>
-      <button class="primary" type="submit" :disabled="saving">{{ saving ? "Salvando…" : "Adicionar domínio" }}</button>
-    </form>
     <div v-if="loading" class="empty"><p>Carregando domínios…</p></div>
     <div v-else-if="!domains.length" class="empty"><p>Nenhum domínio cadastrado ainda.</p></div>
     <ul v-else class="domain-list">
@@ -106,6 +105,17 @@ onMounted(load);
         <p v-if="domain.last_error" class="domain-error">{{ domain.last_error }}</p>
       </li>
     </ul>
+    <BaseModal :open="addOpen" title="Adicionar domínio" description="Configure o endereço público e o serviço de destino." @close="addOpen = false">
+      <form id="add-domain-form" class="domain-form" @submit.prevent="addDomain">
+        <label>Domínio<input v-model="hostname" required autofocus placeholder="app.exemplo.com" /></label>
+        <label v-if="props.services.length">Serviço<select v-model="serviceName" required><option v-for="service in props.services" :key="service" :value="service">{{ service }}</option></select></label>
+        <label v-else>Serviço<input v-model="serviceName" required placeholder="web" /></label>
+        <label>Porta<input v-model.number="targetPort" type="number" min="1" max="65535" required /></label>
+        <label class="checkbox"><input v-model="httpsEnabled" type="checkbox" /> HTTPS automático</label>
+        <label class="checkbox"><input v-model="redirectHttps" type="checkbox" /> Redirecionar HTTP</label>
+      </form>
+      <template #footer><button class="secondary" type="button" :disabled="saving" @click="addOpen = false">Cancelar</button><button class="primary" form="add-domain-form" type="submit" :disabled="saving">{{ saving ? "Salvando…" : "Adicionar domínio" }}</button></template>
+    </BaseModal>
   </section>
 </template>
 
